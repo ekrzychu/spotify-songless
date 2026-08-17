@@ -34,6 +34,10 @@ export function useSpotifyPlayer(enabled: boolean) {
     }
   }, []);
 
+  const invalidateArm = useCallback(() => {
+    controllerRef.current?.invalidateArm();
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
@@ -63,12 +67,20 @@ export function useSpotifyPlayer(enabled: boolean) {
       player.addListener("ready", ({ device_id }) => {
         setDeviceId(device_id); setStatus("ready"); setError(null);
       });
-      player.addListener("not_ready", () => { setStatus("offline"); setDeviceId(null); });
+      player.addListener("not_ready", () => {
+        controller.invalidateArm();
+        void controller.stop(false);
+        setStatus("offline"); setDeviceId(null);
+      });
       player.addListener("player_state_changed", (state) => controller.handleState(state));
       player.addListener("account_error", () => { setStatus("error"); setError("Spotify Premium is required for browser playback."); });
       player.addListener("authentication_error", () => { setStatus("error"); setError("Spotify needs to be reconnected."); });
       player.addListener("initialization_error", () => { setStatus("error"); setError("This browser could not initialize Spotify playback."); });
-      player.addListener("playback_error", () => { void controller.stop(false); setError("This track could not be played."); });
+      player.addListener("playback_error", () => {
+        controller.invalidateArm();
+        void controller.stop(false);
+        setError("This track could not be played.");
+      });
       player.addListener("autoplay_failed", () => setError("Press Play again to allow audio in this browser."));
       void player.connect().then((connected) => { if (!connected) setStatus("error"); });
     };
@@ -100,17 +112,18 @@ export function useSpotifyPlayer(enabled: boolean) {
     setError(null);
     const controller = controllerRef.current;
     if (!controller) throw new Error("Spotify player is not ready");
-    await controller.play(spotifyUri, durationMs, async () => {
+    await controller.play({ spotifyUri, logicalDurationMs: durationMs, primeTrack: async (signal) => {
       const response = await fetch("/api/spotify/playback", {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(spotifyPlaybackStartPayload(deviceId, spotifyUri)),
+        signal,
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
         throw new PlaybackRequestError(payload?.code ?? "playback_failed", payload?.error ?? "Playback failed");
       }
-    });
+    } });
   }, [deviceId, status]);
 
-  return { status, playing, progressMs, error, playSnippet, pause, resetPlayback, ready: status === "ready" };
+  return { status, playing, progressMs, error, playSnippet, pause, resetPlayback, invalidateArm, ready: status === "ready" };
 }

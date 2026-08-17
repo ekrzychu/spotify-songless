@@ -37,6 +37,7 @@ export function GameShell() {
   const connected = connection === "connected";
   const player = useSpotifyPlayer(connected);
   const resetPlayback = player.resetPlayback;
+  const invalidatePlayerArm = player.invalidateArm;
 
   const newRound = useCallback(async (nextFilters: Filters) => {
     setLoadingRound(true); setNotice(null); setExhaustedPool(null); await resetPlayback();
@@ -113,6 +114,10 @@ export function GameShell() {
     const completed = round;
     queueMicrotask(() => setStats(recordResult(completed.id, completed.won, completed.attempts.length)));
   }, [round]);
+
+  useEffect(() => {
+    invalidatePlayerArm();
+  }, [invalidatePlayerArm, round?.spotifyUri]);
 
   const play = useCallback(() => {
     if (!round || round.finished || loadingRound) return;

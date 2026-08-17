@@ -29,6 +29,8 @@ declare global {
     pause(): Promise<void>;
     resume(): Promise<void>;
     seek(positionMs: number): Promise<void>;
+    getVolume(): Promise<number>;
+    setVolume(volume: number): Promise<void>;
     getCurrentState(): Promise<SpotifyPlayerState | null>;
     addListener(event: "ready" | "not_ready", callback: (value: SpotifyReady) => void): boolean;
     addListener(event: "player_state_changed", callback: (value: SpotifyPlayerState | null) => void): boolean;

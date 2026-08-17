@@ -40,6 +40,9 @@ async function mockSpotifySdk(page: Page): Promise<void> {
         constructor() {
           this.listeners = {};
           this.pauseCalls = 0;
+          this.resumeCalls = 0;
+          this.seekCalls = [];
+          this.volume = 0.65;
           this.state = { paused: true, position: 0, duration: 180000, track_window: { current_track: { uri: null } } };
           window.__spodleSdkTest.player = this;
         }
@@ -48,8 +51,20 @@ async function mockSpotifySdk(page: Page): Promise<void> {
         disconnect() {}
         activateElement() { return Promise.resolve(); }
         pause() { this.pauseCalls += 1; this.state = { ...this.state, paused: true }; return Promise.resolve(); }
-        resume() { return Promise.resolve(); }
-        seek() { return Promise.resolve(); }
+        resume() {
+          this.resumeCalls += 1;
+          this.state = { ...this.state, paused: false };
+          this.listeners.player_state_changed?.(this.state);
+          return Promise.resolve();
+        }
+        seek(position) {
+          this.seekCalls.push(position);
+          this.state = { ...this.state, position };
+          this.listeners.player_state_changed?.(this.state);
+          return Promise.resolve();
+        }
+        getVolume() { return Promise.resolve(this.volume); }
+        setVolume(volume) { this.volume = volume; return Promise.resolve(); }
         getCurrentState() { return Promise.resolve(this.state); }
       }};
       setTimeout(() => window.onSpotifyWebPlaybackSDKReady?.(), 0);
@@ -150,7 +165,7 @@ test("Skip advances an attempt", async ({ page }) => {
   await expect(page.getByRole("progressbar", { name: "Snippet playback" })).toHaveAttribute("aria-valuenow", "0");
 });
 
-test("snippet timing waits for SDK confirmation and replay always requests position zero", async ({ page }) => {
+test("first play primes remotely and replay uses the same local snippet lifecycle", async ({ page }) => {
   const state = await mockConnectedGame(page, activeRound(), { autoConfirmPlayback: false });
   await page.goto("/");
   await expect(page.getByText("Attempt 1")).toBeVisible();
@@ -162,12 +177,13 @@ test("snippet timing waits for SDK confirmation and replay always requests posit
 
   await page.evaluate((uri) => (window as unknown as { __spodleSdkTest: { confirm: (value: string) => void } }).__spodleSdkTest.confirm(uri), activeRound().spotifyUri);
   await expect(page.getByRole("button", { name: "Pause song snippet" })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __spodleSdkTest: { player: { pauseCalls: number } } }).__spodleSdkTest.player.pauseCalls)).toBe(2);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __spodleSdkTest: { player: { pauseCalls: number } } }).__spodleSdkTest.player.pauseCalls)).toBe(3);
   await expect(page.getByRole("progressbar", { name: "Snippet playback" })).toHaveAttribute("aria-valuenow", "100");
 
   await page.getByRole("button", { name: "Play song snippet" }).click();
-  await expect.poll(() => state.playbackBodies().length).toBe(2);
-  expect(state.playbackBodies().map((body) => body.positionMs)).toEqual([0, 0]);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __spodleSdkTest: { player: { resumeCalls: number } } }).__spodleSdkTest.player.resumeCalls)).toBe(2);
+  expect(state.playbackBodies().map((body) => body.positionMs)).toEqual([0]);
+  expect(await page.evaluate(() => (window as unknown as { __spodleSdkTest: { player: { seekCalls: number[] } } }).__spodleSdkTest.player.seekCalls)).toEqual([0, 0, 0]);
 });
 
 test("one-second playback fills one fifteenth of the fixed timeline", async ({ page }) => {
