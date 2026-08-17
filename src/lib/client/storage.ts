@@ -2,12 +2,14 @@ export const STORAGE_KEYS = {
   filters: "spodle:filters",
   round: "spodle:round",
   stats: "spodle:stats",
+  volume: "spodle:volume",
 } as const;
 
 const LEGACY_STORAGE_KEYS: Record<keyof typeof STORAGE_KEYS, string> = {
   filters: "needle-drop:filters",
   round: "needle-drop:round",
   stats: "needle-drop:stats",
+  volume: "needle-drop:volume",
 };
 
 export function migrateStorageKey(key: keyof typeof STORAGE_KEYS): string | null {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ENRICHMENT_BALANCE_CATEGORY_IDS,
   groupEnrichmentCandidates,
   selectBalancedEnrichmentGroups,
   type EnrichmentTrackCandidate,
@@ -51,17 +52,13 @@ describe("Soundcharts enrichment selection", () => {
   });
 
   it("selects a repeatable category-balanced batch independent of input order", () => {
-    const categories = [
-      "pop", "rock", "hip-hop", "r-and-b", "electronic", "indie",
-      "metal", "punk", "country", "jazz", "classical",
-      "70s", "80s", "90s", "2000s", "2010s", "2020s",
-    ];
+    const categories = [...ENRICHMENT_BALANCE_CATEGORY_IDS];
     const candidates = categories.flatMap((category, index) => [
       track(`${category}-a-${index}`, category),
       track(`${category}-b-${index}`, category),
     ]);
-    const first = selectBalancedEnrichmentGroups(candidates, 17);
-    const second = selectBalancedEnrichmentGroups([...candidates].reverse(), 17);
+    const first = selectBalancedEnrichmentGroups(candidates, categories.length);
+    const second = selectBalancedEnrichmentGroups([...candidates].reverse(), categories.length);
 
     expect(new Set(first.flatMap((group) => group.categoryIds))).toEqual(new Set(categories));
     expect(first.map((group) => group.key)).toEqual(second.map((group) => group.key));

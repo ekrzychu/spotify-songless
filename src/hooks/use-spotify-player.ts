@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { persistVolumePercent, readStoredVolumePercent } from "@/lib/client/volume";
 import { SnippetPlaybackController, spotifyPlaybackStartPayload } from "@/lib/spotify/snippet-playback";
 
 type PlayerStatus = "loading" | "ready" | "offline" | "error";
@@ -20,6 +21,7 @@ export function useSpotifyPlayer(enabled: boolean) {
   const [playing, setPlaying] = useState(false);
   const [progressMs, setProgressMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [volumePercent, setVolumePercent] = useState(65);
 
   const pause = useCallback(async () => {
     if (controllerRef.current) await controllerRef.current.stop(false);
@@ -38,14 +40,27 @@ export function useSpotifyPlayer(enabled: boolean) {
     controllerRef.current?.invalidateArm();
   }, []);
 
+  const setVolume = useCallback(async (nextVolume: number) => {
+    const normalized = persistVolumePercent(nextVolume);
+    setVolumePercent(normalized);
+    try {
+      await playerRef.current?.setVolume(normalized / 100);
+    } catch (volumeError) {
+      if (process.env.NODE_ENV === "development") console.error("Spotify volume update failed", volumeError);
+      setError("Spotify volume could not be changed.");
+    }
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
     const initialize = () => {
       if (disposed || !window.Spotify || playerRef.current) return;
+      const initialVolume = readStoredVolumePercent();
+      setVolumePercent(initialVolume);
       const player = new window.Spotify.Player({
         name: "spodle",
-        volume: 0.65,
+        volume: initialVolume / 100,
         enableMediaSession: false,
         getOAuthToken: (callback) => {
           void fetch("/api/auth/token", { cache: "no-store" })
@@ -76,10 +91,25 @@ export function useSpotifyPlayer(enabled: boolean) {
       player.addListener("account_error", () => { setStatus("error"); setError("Spotify Premium is required for browser playback."); });
       player.addListener("authentication_error", () => { setStatus("error"); setError("Spotify needs to be reconnected."); });
       player.addListener("initialization_error", () => { setStatus("error"); setError("This browser could not initialize Spotify playback."); });
-      player.addListener("playback_error", () => {
-        controller.invalidateArm();
-        void controller.stop(false);
-        setError("This track could not be played.");
+      player.addListener("playback_error", ({ message }) => {
+        const failure = controller.failFromSdk(message);
+        if (process.env.NODE_ENV === "development") {
+          void player.getCurrentState().catch(() => null).then((state) => {
+            console.error("[spodle spotify playback_error]", {
+              message,
+              phase: failure.phase,
+              requestedUri: failure.requestedUri,
+              armedUri: failure.armedUri,
+              currentUri: state?.track_window?.current_track?.uri ?? null,
+              paused: state?.paused ?? null,
+              position: state?.position ?? null,
+              disallows: state?.disallows ?? null,
+            });
+          });
+        }
+        setError(process.env.NODE_ENV === "development"
+          ? `Spotify playback failed: ${message}`
+          : "This track could not be played.");
       });
       player.addListener("autoplay_failed", () => setError("Press Play again to allow audio in this browser."));
       void player.connect().then((connected) => { if (!connected) setStatus("error"); });
@@ -125,5 +155,17 @@ export function useSpotifyPlayer(enabled: boolean) {
     } });
   }, [deviceId, status]);
 
-  return { status, playing, progressMs, error, playSnippet, pause, resetPlayback, invalidateArm, ready: status === "ready" };
+  return {
+    status,
+    playing,
+    progressMs,
+    volumePercent,
+    error,
+    playSnippet,
+    pause,
+    resetPlayback,
+    invalidateArm,
+    setVolume,
+    ready: status === "ready",
+  };
 }

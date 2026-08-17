@@ -9,6 +9,8 @@ import { PlayButton } from "@/components/game/play-button";
 import { ResultPanel } from "@/components/game/result-panel";
 import { StatsSummary } from "@/components/game/stats-summary";
 import { ConfirmDialog } from "@/components/game/confirm-dialog";
+import { VolumeControl } from "@/components/game/volume-control";
+import { DEFAULT_FILTERS, normalizeStoredFilters, type GameFilters } from "@/lib/client/filters";
 import { EMPTY_STATS, readStats, recordResult, type LocalStats } from "@/lib/client/stats";
 import { migrateStorageKey, STORAGE_KEYS } from "@/lib/client/storage";
 import { checkSpotifyConnection, oauthNotice, type SpotifyConnectionState } from "@/lib/client/spotify-connection";
@@ -18,9 +20,8 @@ import { DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 import { MAX_ATTEMPTS } from "@/lib/game/snippets";
 import type { Difficulty, RoundView, SearchTrack } from "@/types/game";
 
-type Filters = { category: string; difficulty: Difficulty };
+type Filters = GameFilters;
 type SavedRound = { id: string; category: string; difficulty: Difficulty };
-const DEFAULT_FILTERS: Filters = { category: "all", difficulty: "normal" };
 
 export function GameShell() {
   const [connection, setConnection] = useState<SpotifyConnectionState>("checking");
@@ -80,7 +81,11 @@ export function GameShell() {
   useEffect(() => {
     let active = true;
     let stored = DEFAULT_FILTERS;
-    try { stored = { ...DEFAULT_FILTERS, ...JSON.parse(migrateStorageKey("filters") ?? "{}") as Partial<Filters> }; } catch { /* defaults */ }
+    const rawFilters = migrateStorageKey("filters");
+    if (rawFilters !== null) {
+      try { stored = normalizeStoredFilters(JSON.parse(rawFilters) as unknown); } catch { stored = DEFAULT_FILTERS; }
+      localStorage.setItem(STORAGE_KEYS.filters, JSON.stringify(stored));
+    }
     queueMicrotask(() => {
       if (!active) return;
       setFilters(stored); setStats(readStats()); setHydrated(true);
@@ -224,6 +229,11 @@ export function GameShell() {
             <div className="play-area">
               <PlayButton playing={player.playing} disabled={!round || round.finished || !player.ready || loadingRound} onClick={play} />
               <p>{loadingRound ? "Choosing a song…" : player.status === "loading" ? "Preparing Spotify…" : player.status === "offline" ? "Player offline" : `Play ${round?.snippetLength ?? 0.1}s intro`}</p>
+              <VolumeControl
+                value={player.volumePercent}
+                disabled={!player.ready}
+                onChange={(value) => void player.setVolume(value)}
+              />
             </div>
             <GuessSearch disabled={!round || round.finished || loadingRound} busy={attemptBusy} finalAttempt={round?.attempt === MAX_ATTEMPTS - 1} onAttempt={(guess) => void attempt(guess)} />
           </>

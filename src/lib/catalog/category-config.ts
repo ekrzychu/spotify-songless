@@ -11,11 +11,6 @@ const genreCategories: CategoryDefinition[] = [
   { id: "hip-hop", label: "Hip-Hop / Rap", type: "genre", spotifyQuery: "genre:hip-hop" },
   { id: "r-and-b", label: "R&B / Soul", type: "genre", spotifyQuery: "genre:r-n-b" },
   { id: "electronic", label: "Electronic / Dance", type: "genre", spotifyQuery: "genre:electronic" },
-  { id: "indie", label: "Indie / Alternative", type: "genre", spotifyQuery: "genre:indie" },
-  { id: "metal", label: "Metal", type: "genre", spotifyQuery: "genre:metal" },
-  { id: "punk", label: "Punk", type: "genre", spotifyQuery: "genre:punk" },
-  { id: "country", label: "Country", type: "genre", spotifyQuery: "genre:country" },
-  { id: "jazz", label: "Jazz", type: "genre", spotifyQuery: "genre:jazz" },
   { id: "classical", label: "Classical", type: "genre", spotifyQuery: "genre:classical" },
 ];
 

@@ -237,7 +237,7 @@ a { color: inherit; }
 .duration-fill { position: absolute; z-index: 1; inset: 0; background: var(--accent); transform-origin: left; pointer-events: none; }
 .duration-scale { display: flex; justify-content: space-between; color: var(--text-faint); font-size: 10px; margin-top: 7px; }
 
-.play-area { display: flex; flex-direction: column; align-items: center; min-height: 108px; }
+.play-area { display: flex; flex-direction: column; align-items: center; min-height: 114px; }
 .play-button {
   width: 68px;
   height: 68px;
@@ -257,7 +257,17 @@ a { color: inherit; }
 .play-button:disabled { opacity: .28; cursor: default; box-shadow: none; }
 .play-button svg { width: 28px; height: 28px; fill: currentColor; }
 .play-button svg path[d^="m8"] { transform: translateX(1px); }
-.play-area p { min-height: 14px; margin: 13px 0 0; color: var(--text-faint); font-size: 11px; }
+.play-area p { min-height: 14px; margin: 9px 0 0; color: var(--text-faint); font-size: 11px; }
+.volume-control { display: flex; align-items: center; gap: 6px; width: 150px; height: 18px; margin-top: 4px; color: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
+.volume-control svg { width: 14px; height: 14px; flex: 0 0 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.4; }
+.volume-control input { width: 106px; height: 18px; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
+.volume-control input:disabled { cursor: default; opacity: .45; }
+.volume-control input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.volume-control input::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--border-strong); }
+.volume-control input::-webkit-slider-thumb { width: 10px; height: 10px; margin-top: -3.5px; border: 0; border-radius: 50%; background: var(--accent); appearance: none; }
+.volume-control input::-moz-range-track { height: 3px; border-radius: 2px; background: var(--border-strong); }
+.volume-control input::-moz-range-thumb { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--accent); }
+.volume-control span { width: 18px; text-align: right; }
 
 .guess-row { display: flex; gap: 8px; margin-top: 25px; }
 .search-wrap { flex: 1; min-width: 0; position: relative; }
@@ -426,7 +436,7 @@ footer { display: flex; justify-content: space-between; margin-top: 6px; padding
   .attempt { min-height: 41px; }
   .duration { margin-top: 39px; }
   .play-button { width: 62px; height: 62px; }
-  .play-area { min-height: 100px; }
+  .play-area { min-height: 106px; }
   .guess-row { margin-top: 18px; }
   .attempt-button { width: 76px; }
   .search-results { position: fixed; left: 14px; right: 14px; bottom: 76px; max-height: min(45vh, 310px); }

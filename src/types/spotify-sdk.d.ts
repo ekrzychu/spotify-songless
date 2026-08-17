@@ -17,6 +17,19 @@ declare global {
     paused: boolean;
     position: number;
     duration: number;
+    disallows?: {
+      pausing?: boolean;
+      peeking_next?: boolean;
+      peeking_prev?: boolean;
+      resuming?: boolean;
+      seeking?: boolean;
+      skipping_next?: boolean;
+      skipping_prev?: boolean;
+      toggling_repeat_context?: boolean;
+      toggling_repeat_track?: boolean;
+      toggling_shuffle?: boolean;
+      transferring_playback?: boolean;
+    };
     track_window?: { current_track?: { uri?: string } };
   };
   type SpotifyError = { message: string };
