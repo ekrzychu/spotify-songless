@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { SnippetPlaybackController } from "@/lib/spotify/snippet-playback";
+import { SnippetPlaybackController, spotifyPlaybackStartPayload } from "@/lib/spotify/snippet-playback";
 
 type PlayerStatus = "loading" | "ready" | "offline" | "error";
 
@@ -54,7 +54,11 @@ export function useSpotifyPlayer(enabled: boolean) {
         },
       });
       playerRef.current = player;
-      const controller = new SnippetPlaybackController(player, { onPlaying: setPlaying, onProgress: setProgressMs });
+      const controller = new SnippetPlaybackController(player, {
+        onPlaying: setPlaying,
+        onProgress: setProgressMs,
+        onStopError: setError,
+      });
       controllerRef.current = controller;
       player.addListener("ready", ({ device_id }) => {
         setDeviceId(device_id); setStatus("ready"); setError(null);
@@ -99,7 +103,7 @@ export function useSpotifyPlayer(enabled: boolean) {
     await controller.play(spotifyUri, durationMs, async () => {
       const response = await fetch("/api/spotify/playback", {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, spotifyUri, positionMs: 0 }),
+        body: JSON.stringify(spotifyPlaybackStartPayload(deviceId, spotifyUri)),
       });
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;

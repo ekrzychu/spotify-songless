@@ -1,5 +1,31 @@
 export const PLAYBACK_START_TIMEOUT_MS = 5_000;
 export const PLAYBACK_STATE_POLL_MS = 25;
+export const FIRST_SNIPPET_TRANSPORT_MS = 350;
+export const PAUSE_CONFIRM_INTERVAL_MS = 40;
+export const PAUSE_CONFIRM_MAX_ATTEMPTS = 3;
+export const PAUSE_CONFIRM_TIMEOUT_MS = 1_000;
+
+const FIRST_SNIPPET_LOGICAL_MS = 100;
+
+export type SnippetTiming = { logicalDurationMs: number; transportDurationMs: number };
+
+export function snippetTiming(logicalDurationMs: number): SnippetTiming {
+  return {
+    logicalDurationMs,
+    transportDurationMs: logicalDurationMs === FIRST_SNIPPET_LOGICAL_MS
+      ? FIRST_SNIPPET_TRANSPORT_MS
+      : logicalDurationMs,
+  };
+}
+
+export function logicalProgressForTransport(elapsedMs: number, timing: SnippetTiming): number {
+  const ratio = Math.min(Math.max(elapsedMs, 0) / timing.transportDurationMs, 1);
+  return ratio * timing.logicalDurationMs;
+}
+
+export function spotifyPlaybackStartPayload(deviceId: string, spotifyUri: string) {
+  return { deviceId, spotifyUri, positionMs: 0 } as const;
+}
 
 export type SnippetPlayerState = {
   paused: boolean;
@@ -16,6 +42,7 @@ export type SnippetPlayer = {
 type PlaybackCallbacks = {
   onPlaying: (playing: boolean) => void;
   onProgress: (progressMs: number) => void;
+  onStopError?: (message: string) => void;
 };
 
 type StartWaiter = {
@@ -34,7 +61,7 @@ export class PlaybackStartTimeoutError extends Error {
 
 export class SnippetPlaybackController {
   private generation = 0;
-  private active: { generation: number; spotifyUri: string; durationMs: number; startedAt: number } | null = null;
+  private active: { generation: number; spotifyUri: string; timing: SnippetTiming; startedAt: number } | null = null;
   private waiter: StartWaiter | null = null;
   private startPoll: ReturnType<typeof setInterval> | null = null;
   private startTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -49,7 +76,7 @@ export class SnippetPlaybackController {
     private readonly now: () => number = () => performance.now(),
   ) {}
 
-  async play(spotifyUri: string, durationMs: number, startPlayback: () => Promise<void>): Promise<void> {
+  async play(spotifyUri: string, logicalDurationMs: number, startPlayback: () => Promise<void>): Promise<void> {
     const generation = ++this.generation;
     this.clearRun();
     this.callbacks.onProgress(0);
@@ -70,12 +97,13 @@ export class SnippetPlaybackController {
     try {
       const state = await this.waitForStart(generation, spotifyUri);
       if (generation !== this.generation) return;
-      this.active = { generation, spotifyUri, durationMs, startedAt: this.now() };
+      const timing = snippetTiming(logicalDurationMs);
+      this.active = { generation, spotifyUri, timing, startedAt: this.now() };
       this.callbacks.onPlaying(true);
       this.updateProgress(state);
       if (!this.active) return;
       this.progressPoll = setInterval(() => void this.pollActiveState(generation), PLAYBACK_STATE_POLL_MS);
-      this.hardStop = setTimeout(() => void this.finish(generation), durationMs);
+      this.hardStop = setTimeout(() => void this.finish(generation), timing.transportDurationMs);
     } catch (error) {
       if (generation === this.generation) {
         this.clearRun();
@@ -101,11 +129,13 @@ export class SnippetPlaybackController {
   }
 
   async stop(resetProgress = false): Promise<void> {
-    ++this.generation;
+    const spotifyUri = this.active?.spotifyUri ?? this.waiter?.spotifyUri;
+    const generation = ++this.generation;
     this.clearRun();
     this.callbacks.onPlaying(false);
     if (resetProgress) this.callbacks.onProgress(0);
-    await this.requestPause();
+    if (spotifyUri) await this.pauseAndConfirm(generation, spotifyUri);
+    else await this.requestPause();
   }
 
   private waitForStart(generation: number, spotifyUri: string): Promise<SnippetPlayerState> {
@@ -158,17 +188,60 @@ export class SnippetPlaybackController {
     if (!active) return;
     const sdkPosition = state && !state.paused ? state.position : 0;
     const elapsed = Math.max(sdkPosition, this.now() - active.startedAt);
-    this.callbacks.onProgress(Math.min(elapsed, active.durationMs));
-    if (elapsed >= active.durationMs) void this.finish(active.generation);
+    this.callbacks.onProgress(logicalProgressForTransport(elapsed, active.timing));
+    if (elapsed >= active.timing.transportDurationMs) void this.finish(active.generation);
   }
 
   private async finish(generation: number): Promise<void> {
     const active = this.active;
     if (!active || active.generation !== generation || generation !== this.generation) return;
-    this.callbacks.onProgress(active.durationMs);
+    this.callbacks.onProgress(active.timing.logicalDurationMs);
     this.clearRun();
     this.callbacks.onPlaying(false);
-    await this.requestPause();
+    const result = await this.pauseAndConfirm(generation, active.spotifyUri);
+    if (result === "failed" && generation === this.generation) {
+      this.callbacks.onStopError?.("Spotify did not confirm that playback stopped. Press Pause and try again.");
+    }
+  }
+
+  private async pauseAndConfirm(
+    generation: number,
+    spotifyUri: string,
+  ): Promise<"confirmed" | "cancelled" | "failed"> {
+    const deadline = this.now() + PAUSE_CONFIRM_TIMEOUT_MS;
+    for (let attempt = 0; attempt < PAUSE_CONFIRM_MAX_ATTEMPTS; attempt += 1) {
+      if (generation !== this.generation) return "cancelled";
+      const paused = await this.beforeDeadline(this.requestPause(), deadline);
+      if (!paused.completed || generation !== this.generation) return generation === this.generation ? "failed" : "cancelled";
+      const waited = await this.beforeDeadline(this.delay(PAUSE_CONFIRM_INTERVAL_MS), deadline);
+      if (!waited.completed || generation !== this.generation) return generation === this.generation ? "failed" : "cancelled";
+      const result = await this.beforeDeadline(this.player.getCurrentState().catch(() => null), deadline);
+      if (!result.completed) return "failed";
+      if (generation !== this.generation) return "cancelled";
+      if (result.value && !this.isRequestedTrackPlaying(result.value, spotifyUri)) return "confirmed";
+    }
+    return "failed";
+  }
+
+  private async beforeDeadline<T>(
+    operation: Promise<T>,
+    deadline: number,
+  ): Promise<{ completed: true; value: T } | { completed: false }> {
+    const remainingMs = deadline - this.now();
+    if (remainingMs <= 0) return { completed: false };
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const result = await Promise.race([
+      operation.then((value) => ({ completed: true as const, value })),
+      new Promise<{ completed: false }>((resolve) => {
+        timeout = setTimeout(() => resolve({ completed: false }), remainingMs);
+      }),
+    ]);
+    if (timeout) clearTimeout(timeout);
+    return result;
+  }
+
+  private delay(durationMs: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, durationMs));
   }
 
   private isRequestedTrackPlaying(state: SnippetPlayerState | null, spotifyUri: string): state is SnippetPlayerState {
