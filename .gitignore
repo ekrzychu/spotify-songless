@@ -1,0 +1,14 @@
+node_modules/
+.next/
+coverage/
+*.log
+.env
+.env.local
+.env.*.local
+dev.db
+dev.db-journal
+prisma/dev.db
+prisma/dev.db-journal
+.runtime/
+node-portable.zip
+*.tsbuildinfo

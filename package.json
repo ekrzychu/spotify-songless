@@ -1,0 +1,45 @@
+{
+  "name": "needle-drop",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "prisma generate",
+    "db:push": "tsx --env-file=.env.local scripts/push-db.ts",
+    "catalog:populate": "tsx --env-file=.env.local scripts/populate-catalog.ts",
+    "import:streams": "tsx --env-file=.env.local scripts/import-streams.ts",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.5.0",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.4.7",
+    "next": "^16.3.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "eslint": "^9.22.0",
+    "eslint-config-next": "^16.3.1",
+    "prisma": "^6.5.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
+  }
+}
