@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import type { SpotifyTrack } from "@/lib/spotify/api";
 import { normalizeIsrc } from "@/lib/streams/import-normalizer";
+import { assignDerivedCategories } from "@/lib/catalog/derived-categories";
 
 export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string): Promise<"created" | "updated"> {
   const data = {
@@ -26,5 +27,6 @@ export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string
     where: { trackId_categoryId: { trackId: saved.id, categoryId } },
     create: { trackId: saved.id, categoryId }, update: {},
   });
+  await assignDerivedCategories(saved.id, saved.releaseDate);
   return existing ? "updated" : "created";
 }

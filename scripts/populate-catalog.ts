@@ -8,6 +8,10 @@ import {
 } from "../src/lib/spotify/api";
 import { db } from "../src/lib/db";
 import { paginateSpotifySearch } from "../src/lib/catalog/spotify-pagination";
+import {
+  backfillDerivedCategories,
+  formatDecadeAssociationSummary,
+} from "../src/lib/catalog/derived-categories";
 
 const resultsPerCategory = Math.min(Math.max(Number(process.env.CATALOG_RESULTS_PER_CATEGORY ?? 100), 10), 500);
 const market = process.env.SPOTIFY_MARKET ?? "US";
@@ -18,7 +22,7 @@ async function main(): Promise<void> {
   const token = await getClientCredentialsToken();
   const total = { requests: 0, discovered: 0, created: 0, updated: 0 };
   const uniqueTrackIds = new Set<string>();
-  for (const category of CATEGORIES.filter((item) => item.spotifyQuery)) {
+  for (const category of CATEGORIES.filter((item) => item.type === "genre" && item.spotifyQuery)) {
     const pageResult = await paginateSpotifySearch(async ({ offset, limit }) => {
       const params = new URLSearchParams({
         q: category.spotifyQuery!, type: "track", limit: String(limit), offset: String(offset), market,
@@ -50,6 +54,8 @@ async function main(): Promise<void> {
     "\nTOTAL", `Requests: ${total.requests}`, `Discovered: ${total.discovered}`,
     `Unique tracks: ${uniqueTrackIds.size}`, `Created: ${total.created}`, `Updated: ${total.updated}`,
   ].join("\n"));
+  const decadeSummary = await backfillDerivedCategories();
+  console.log(`\n${formatDecadeAssociationSummary(decadeSummary)}`);
 }
 
 main()

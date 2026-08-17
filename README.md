@@ -81,9 +81,17 @@ The OAuth flow uses Authorization Code with PKCE, short-lived integrity-protecte
 npm run catalog:populate
 ```
 
-The command reads the centralized genre/decade configuration, searches Spotify sequentially in pages of at most 10, follows pagination until the configured result target or the end of results, applies bounded `Retry-After` handling, deduplicates tracks, upserts metadata, and preserves every category association. It prints request, discovered, created, updated, and unique-track totals.
+The command reads the centralized genre configuration, searches Spotify sequentially in pages of at most 10, follows pagination until the configured result target or the end of results, applies bounded `Retry-After` handling, deduplicates tracks, upserts metadata, and preserves every category association. It prints request, discovered, created, updated, unique-track, and derived-decade totals.
 
 Catalog population does not assign difficulty. New tracks remain unranked until verified stream counts are imported.
+
+Decade membership is derived from each track's Spotify release date during ingestion, so catalog population only performs genre searches. To reconcile decade associations for tracks already in the local database without contacting Spotify, run:
+
+```powershell
+npm run catalog:backfill-decades
+```
+
+The backfill preserves genre associations, upserts the matching decade relation for release years from 1970 through 2029, removes stale decade relations, and prints the resulting count for every decade.
 
 ## Import verified lifetime stream counts
 

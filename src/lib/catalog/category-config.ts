@@ -20,12 +20,12 @@ const genreCategories: CategoryDefinition[] = [
 ];
 
 const decadeCategories: CategoryDefinition[] = [
-  { id: "70s", label: "70s", type: "decade", spotifyQuery: "year:1970-1979" },
-  { id: "80s", label: "80s", type: "decade", spotifyQuery: "year:1980-1989" },
-  { id: "90s", label: "90s", type: "decade", spotifyQuery: "year:1990-1999" },
-  { id: "2000s", label: "2000s", type: "decade", spotifyQuery: "year:2000-2009" },
-  { id: "2010s", label: "2010s", type: "decade", spotifyQuery: "year:2010-2019" },
-  { id: "2020s", label: "2020s", type: "decade", spotifyQuery: "year:2020-2029" },
+  { id: "70s", label: "70s", type: "decade" },
+  { id: "80s", label: "80s", type: "decade" },
+  { id: "90s", label: "90s", type: "decade" },
+  { id: "2000s", label: "2000s", type: "decade" },
+  { id: "2010s", label: "2010s", type: "decade" },
+  { id: "2020s", label: "2020s", type: "decade" },
 ];
 
 export const CATEGORY_GROUPS: { label: string; categories: CategoryDefinition[] }[] = [
