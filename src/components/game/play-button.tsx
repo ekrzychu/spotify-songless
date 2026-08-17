@@ -2,8 +2,8 @@ export function PlayButton({ playing, disabled, onClick }: { playing: boolean; d
   return (
     <button className="play-button" type="button" disabled={disabled} onClick={onClick} aria-label={playing ? "Pause song snippet" : "Play song snippet"}>
       {playing
-        ? <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zm6 0h4v14h-4z" /></svg>
-        : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z" /></svg>}
+        ? <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.75 5.5h2.4v9h-2.4zm4.1 0h2.4v9h-2.4z" /></svg>
+        : <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.25 5.4v9.2l7.9-4.6-7.9-4.6Z" /></svg>}
     </button>
   );
 }

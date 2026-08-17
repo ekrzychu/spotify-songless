@@ -208,6 +208,7 @@ test("volume defaults to 65 and user changes stay local", async ({ page }) => {
   await expect(page.getByText("Attempt 1")).toBeVisible();
   const volume = page.getByRole("slider", { name: "Volume" });
   await expect(volume).toHaveValue("65");
+  await expect(page.locator(".volume-control > span")).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __spodleSdkTest: { initialVolumes: number[] } }).__spodleSdkTest.initialVolumes)).toEqual([0.65]);
 
   for (const [percent, sdkVolume] of [[0, 0], [65, 0.65], [100, 1]] as const) {
@@ -222,6 +223,22 @@ test("volume defaults to 65 and user changes stay local", async ({ page }) => {
   expect(await page.evaluate(() => localStorage.getItem("spodle:volume"))).toBe("100");
   expect(await page.evaluate(() => (window as unknown as { __spodleSdkTest: { instances: number } }).__spodleSdkTest.instances)).toBe(1);
   expect(state.roundRequests()).toBe(1);
+  expect(state.playbackBodies()).toEqual([]);
+});
+
+test("volume keyboard input stays local and does not trigger the Space playback shortcut", async ({ page }) => {
+  const state = await mockConnectedGame(page);
+  await page.goto("/");
+  const volume = page.getByRole("slider", { name: "Volume" });
+  await volume.fill("65");
+  await volume.focus();
+  await volume.press("ArrowRight");
+  await expect(volume).toHaveValue("66");
+  await expect.poll(() => page.evaluate(() => {
+    const sdk = (window as unknown as { __spodleSdkTest: { player: { setVolumeCalls: number[] } } }).__spodleSdkTest;
+    return sdk.player.setVolumeCalls.at(-1);
+  })).toBe(0.66);
+  await volume.press("Space");
   expect(state.playbackBodies()).toEqual([]);
 });
 
@@ -251,6 +268,26 @@ test("development playback errors retain Spotify's exact message", async ({ page
   await expect(page.getByText("Spotify playback failed: Mock Spotify playback failure")).toBeVisible();
   await expect.poll(() => consoleMessages.some((message) => message.includes("[spodle spotify playback_error]"))).toBe(true);
   await expect(page.getByText("This track could not be played.")).toHaveCount(0);
+});
+
+test("Play and Pause keep the same compact button geometry", async ({ page }) => {
+  const oneSecondRound = { ...activeRound(), attempt: 1, snippetLength: 1 };
+  await mockConnectedGame(page, oneSecondRound, { initialRound: oneSecondRound });
+  await page.goto("/");
+  const play = page.getByRole("button", { name: "Play song snippet" });
+  const playBox = await play.boundingBox();
+  expect(playBox).not.toBeNull();
+  expect(playBox!.width).toBeGreaterThanOrEqual(54);
+  expect(playBox!.width).toBeLessThanOrEqual(56);
+  expect(playBox!.height).toBe(playBox!.width);
+
+  await play.click();
+  const pause = page.getByRole("button", { name: "Pause song snippet" });
+  await expect(pause).toBeVisible();
+  const pauseBox = await pause.boundingBox();
+  expect(pauseBox).not.toBeNull();
+  expect(pauseBox!.width).toBe(playBox!.width);
+  expect(pauseBox!.height).toBe(playBox!.height);
 });
 
 test("Skip advances an attempt", async ({ page }) => {
@@ -362,7 +399,7 @@ test("result dialog owns focus and Next Song starts another round", async ({ pag
 });
 
 for (const width of [360, 375, 768, 1366, 1920]) {
-  test(`filters remain inside a ${width}px viewport`, async ({ page }) => {
+  test(`filters and playback controls remain balanced inside a ${width}px viewport`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await mockConnectedGame(page);
     await page.goto("/");
@@ -371,6 +408,13 @@ for (const width of [360, 375, 768, 1366, 1920]) {
     expect(box).not.toBeNull();
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    const playBox = await page.getByRole("button", { name: "Play song snippet" }).boundingBox();
+    const volumeBox = await page.locator(".volume-control").boundingBox();
+    expect(playBox).not.toBeNull();
+    expect(volumeBox).not.toBeNull();
+    expect(playBox!.width).toBeGreaterThanOrEqual(54);
+    expect(playBox!.width).toBeLessThanOrEqual(56);
+    expect(Math.abs((playBox!.x + playBox!.width / 2) - (volumeBox!.x + volumeBox!.width / 2))).toBeLessThanOrEqual(1);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);
   });
