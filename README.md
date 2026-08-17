@@ -57,6 +57,7 @@ Soundcharts credentials are used only by the optional server-side diagnostic. Pu
 ```env
 SOUNDCHARTS_CLIENT_ID=
 SOUNDCHARTS_CLIENT_SECRET=
+SOUNDCHARTS_QUOTA_RESERVE=50
 ```
 
 ## Initial installation
@@ -108,7 +109,31 @@ To test Soundcharts resolution and Spotify audience access against 10 determinis
 npm run soundcharts:test
 ```
 
-Use a smaller diagnostic batch with `npm run soundcharts:test -- --limit 5`; values above 10 are clamped to 10. The command uses the current client-credentials flow, performs no database writes, prints its approximate request count, and does not classify or import returned values. A returned Spotify audience value must not be treated as verified lifetime streams until the live results are reviewed.
+Use a smaller diagnostic batch with `npm run soundcharts:test -- --limit 5`; values above 10 are clamped to 10. The command uses the current client-credentials flow, performs no database writes, and prints its approximate request count. Soundcharts song-level Spotify audience values are cumulative Spotify stream counts.
+
+## Enrich stream counts from Soundcharts
+
+Apply the additive provenance schema once before the first enrichment run:
+
+```powershell
+npm run db:push
+```
+
+Then enrich a deterministic, category-balanced batch of 100 recording groups:
+
+```powershell
+npm run streams:enrich:soundcharts -- --limit 100
+```
+
+The default is 100 groups and the maximum is 400 per execution. Tracks with existing stream counts are skipped. Local Spotify versions sharing a normalized ISRC are processed as one recording group, identical Soundcharts stream values across Spotify identifiers are counted once, and successful values use the centralized difficulty classifier. The command stops when the reported quota reaches `SOUNDCHARTS_QUOTA_RESERVE`, which defaults to 50.
+
+An explicit refresh updates missing tracks plus values whose current source is Soundcharts; CSV-owned values remain untouched:
+
+```powershell
+npm run streams:enrich:soundcharts -- --limit 100 --refresh
+```
+
+Resolved songs without audience data retain a null stream count and difficulty. The Soundcharts UUID is cached so a later attempt can skip identifier resolution.
 
 ## Import verified lifetime stream counts
 

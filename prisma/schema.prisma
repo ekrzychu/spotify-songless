@@ -8,24 +8,27 @@ datasource db {
 }
 
 model GameTrack {
-  id             String               @id @default(cuid())
-  spotifyTrackId String               @unique
-  spotifyUri     String
-  isrc           String?
-  title          String
-  artistNames    String
-  artistsJson    String
-  albumName      String
-  releaseDate    String?
-  streamCount    BigInt?
-  difficulty     String?
-  playable       Boolean              @default(true)
-  spotifyUrl     String
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  categories     TrackCategory[]
-  rounds         GameRound[]
-  unavailableIn  SessionUnavailableTrack[]
+  id                   String                    @id @default(cuid())
+  spotifyTrackId       String                    @unique
+  spotifyUri           String
+  isrc                 String?
+  title                String
+  artistNames          String
+  artistsJson          String
+  albumName            String
+  releaseDate          String?
+  streamCount          BigInt?
+  difficulty           String?
+  soundchartsUuid      String?
+  streamCountSource    String?
+  streamCountUpdatedAt DateTime?
+  playable             Boolean                   @default(true)
+  spotifyUrl           String
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  categories           TrackCategory[]
+  rounds               GameRound[]
+  unavailableIn        SessionUnavailableTrack[]
 
   @@index([difficulty, playable])
   @@index([isrc])
@@ -51,32 +54,32 @@ model TrackCategory {
 }
 
 model GameRound {
-  id             String         @id @default(cuid())
-  sessionId      String
-  trackId        String
-  attempt        Int            @default(0)
-  finished       Boolean        @default(false)
-  won            Boolean        @default(false)
-  categoryId     String
-  difficulty     String
-  createdAt      DateTime       @default(now())
-  finishedAt     DateTime?
-  track          GameTrack      @relation(fields: [trackId], references: [id])
-  attempts       RoundAttempt[]
+  id         String         @id @default(cuid())
+  sessionId  String
+  trackId    String
+  attempt    Int            @default(0)
+  finished   Boolean        @default(false)
+  won        Boolean        @default(false)
+  categoryId String
+  difficulty String
+  createdAt  DateTime       @default(now())
+  finishedAt DateTime?
+  track      GameTrack      @relation(fields: [trackId], references: [id])
+  attempts   RoundAttempt[]
 
   @@index([sessionId, createdAt])
 }
 
 model RoundAttempt {
-  id            String    @id @default(cuid())
-  roundId       String
-  number        Int
-  outcome       String
-  guessTrackId  String?
-  guessTitle    String?
-  guessArtists  String?
-  createdAt     DateTime  @default(now())
-  round         GameRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  id           String    @id @default(cuid())
+  roundId      String
+  number       Int
+  outcome      String
+  guessTrackId String?
+  guessTitle   String?
+  guessArtists String?
+  createdAt    DateTime  @default(now())
+  round        GameRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
 
   @@unique([roundId, number])
 }

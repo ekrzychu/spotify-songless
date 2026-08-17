@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   parseAccessTokenResponse,
   parseLatestSpotifyAudience,
+  parseLatestSpotifyAudienceSnapshot,
   parseSongUuidResponse,
   SoundchartsApiError,
   SoundchartsClient,
@@ -43,6 +44,24 @@ describe("Soundcharts response parsing", () => {
     expect(parseLatestSpotifyAudience({
       items: [{ date: "2026-08-16T00:00:00+00:00", plots: [{ identifier: "other-id", value: 125 }] }],
     }, "spotify-id")).toBeNull();
+  });
+
+  it("keeps all plots from the latest audience date", () => {
+    expect(parseLatestSpotifyAudienceSnapshot({
+      items: [{
+        date: "2026-08-16T00:00:00+00:00",
+        plots: [
+          { identifier: "spotify-a", value: 100 },
+          { identifier: "spotify-b", value: 50 },
+        ],
+      }],
+    })).toEqual({
+      date: "2026-08-16T00:00:00+00:00",
+      plots: [
+        { identifier: "spotify-a", value: 100 },
+        { identifier: "spotify-b", value: 50 },
+      ],
+    });
   });
 
   it.each([
@@ -104,6 +123,32 @@ describe("Soundcharts HTTP errors", () => {
     expect(fetchMock.mock.calls[2]?.[0]).toBe(
       "https://customer.api.soundcharts.com/api/v2/song/song-uuid/audience/spotify?sort=desc&limit=1&identifier=spotify-id",
     );
+  });
+
+  it("requests an unfiltered latest snapshot and tracks quota headers", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse({
+        items: [{ date: "2026-08-16T00:00:00+00:00", plots: [] }],
+      }, 200, { "x-quota-remaining": "803" }));
+    const client = new SoundchartsClient({ fetch: fetchMock, credentials });
+
+    await client.getLatestSpotifyAudienceSnapshot("song-uuid");
+
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://customer.api.soundcharts.com/api/v2/song/song-uuid/audience/spotify?sort=desc&limit=1",
+    );
+    expect(client.quotaRemaining).toBe(803);
+  });
+
+  it("uses the free usage endpoint to refresh quota information", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(jsonResponse({}, 200, { "x-quota-remaining": "900" }));
+    const client = new SoundchartsClient({ fetch: fetchMock, credentials });
+
+    await expect(client.refreshQuotaRemaining()).resolves.toBe(900);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("https://customer.api.soundcharts.com/api/v2/team/usage");
   });
 
   it("rejects a malformed successful HTTP response", async () => {

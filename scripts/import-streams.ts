@@ -34,9 +34,19 @@ async function main(): Promise<void> {
     }
     summary.matched += 1;
     const difficulty = difficultyFromStreams(row.streamCount);
-    if (fallback.streamCount !== BigInt(row.streamCount) || fallback.difficulty !== difficulty) {
+    if (
+      fallback.streamCount !== BigInt(row.streamCount)
+      || fallback.difficulty !== difficulty
+      || fallback.streamCountSource !== "csv"
+    ) {
       await db.gameTrack.update({
-        where: { id: fallback.id }, data: { streamCount: BigInt(row.streamCount), difficulty },
+        where: { id: fallback.id },
+        data: {
+          streamCount: BigInt(row.streamCount),
+          difficulty,
+          streamCountSource: "csv",
+          streamCountUpdatedAt: new Date(),
+        },
       });
       summary.updated += 1;
     } else summary.unchanged += 1;

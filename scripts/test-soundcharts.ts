@@ -169,7 +169,7 @@ async function main(): Promise<void> {
         track,
         soundchartsUuid,
         audience,
-        audience ? "OK — VALUE REQUIRES LIFETIME-STREAM VERIFICATION" : "AUDIENCE UNAVAILABLE",
+        audience ? "OK — CUMULATIVE SPOTIFY STREAM COUNT" : "AUDIENCE UNAVAILABLE",
         resolutionSource,
       );
     } catch (error) {

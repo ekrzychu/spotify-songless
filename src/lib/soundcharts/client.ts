@@ -9,6 +9,7 @@ export type SoundchartsErrorCode =
   | "forbidden"
   | "not_found"
   | "rate_limited"
+  | "quota_reserve"
   | "api_error"
   | "malformed_response"
   | "network_error";
@@ -28,6 +29,11 @@ export type SpotifyAudiencePoint = {
   streams: number;
 };
 
+export type SpotifyAudienceSnapshot = {
+  date: string;
+  plots: unknown[];
+};
+
 export type SoundchartsClientOptions = {
   fetch?: FetchLike;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -43,6 +49,7 @@ function messageForError(code: SoundchartsErrorCode, status: number | null): str
     case "forbidden": return "Endpoint not included in the current Soundcharts plan";
     case "not_found": return "Song not found in Soundcharts";
     case "rate_limited": return "Soundcharts quota or rate limit reached";
+    case "quota_reserve": return "Soundcharts quota safety reserve reached";
     case "malformed_response": return "Soundcharts returned a malformed response";
     case "network_error": return "Soundcharts request could not be completed";
     default: return `Soundcharts request failed${status === null ? "" : ` (${status})`}`;
@@ -102,6 +109,25 @@ export function parseLatestSpotifyAudience(
   return latest ? { date: latest.date, streams: latest.streams } : null;
 }
 
+export function parseLatestSpotifyAudienceSnapshot(payload: unknown): SpotifyAudienceSnapshot | null {
+  const items = asRecord(payload)?.items;
+  if (!Array.isArray(items)) throw new SoundchartsApiError("malformed_response", 200);
+  if (items.length === 0) return null;
+
+  const snapshots = items.map((rawItem) => {
+    const item = asRecord(rawItem);
+    const date = item?.date;
+    const plots = item?.plots;
+    const timestamp = typeof date === "string" ? Date.parse(date) : Number.NaN;
+    if (typeof date !== "string" || !Number.isFinite(timestamp) || !Array.isArray(plots)) {
+      throw new SoundchartsApiError("malformed_response", 200);
+    }
+    return { date, plots, timestamp };
+  });
+  const latest = snapshots.sort((left, right) => right.timestamp - left.timestamp)[0];
+  return latest ? { date: latest.date, plots: latest.plots } : null;
+}
+
 function statusToError(status: number): SoundchartsApiError {
   if (status === 401) return new SoundchartsApiError("authentication_failed", status);
   if (status === 403) return new SoundchartsApiError("forbidden", status);
@@ -122,6 +148,7 @@ export class SoundchartsClient {
   private readonly credentials?: { clientId: string; clientSecret: string };
   private accessTokenPromise: Promise<string> | null = null;
   private requests = 0;
+  private quotaRemainingValue: number | null = null;
 
   constructor(options: SoundchartsClientOptions = {}) {
     this.fetchImpl = options.fetch ?? fetch;
@@ -133,6 +160,10 @@ export class SoundchartsClient {
 
   get requestCount(): number {
     return this.requests;
+  }
+
+  get quotaRemaining(): number | null {
+    return this.quotaRemainingValue;
   }
 
   getAccessToken(): Promise<string> {
@@ -161,6 +192,21 @@ export class SoundchartsClient {
       `/api/v2/song/${encodeURIComponent(soundchartsSongUuid)}/audience/spotify?${query}`,
     );
     return parseLatestSpotifyAudience(payload, spotifyTrackId);
+  }
+
+  async getLatestSpotifyAudienceSnapshot(
+    soundchartsSongUuid: string,
+  ): Promise<SpotifyAudienceSnapshot | null> {
+    const query = new URLSearchParams({ sort: "desc", limit: "1" });
+    const payload = await this.authorizedRequest(
+      `/api/v2/song/${encodeURIComponent(soundchartsSongUuid)}/audience/spotify?${query}`,
+    );
+    return parseLatestSpotifyAudienceSnapshot(payload);
+  }
+
+  async refreshQuotaRemaining(): Promise<number | null> {
+    await this.authorizedRequest("/api/v2/team/usage");
+    return this.quotaRemaining;
   }
 
   private async requestAccessToken(): Promise<string> {
@@ -193,6 +239,12 @@ export class SoundchartsClient {
       response = await this.fetchImpl(url, init);
     } catch {
       throw new SoundchartsApiError("network_error", null);
+    }
+
+    const quotaHeader = response.headers.get("x-quota-remaining");
+    const quotaRemaining = quotaHeader === null ? Number.NaN : Number(quotaHeader);
+    if (Number.isSafeInteger(quotaRemaining) && quotaRemaining >= 0) {
+      this.quotaRemainingValue = quotaRemaining;
     }
 
     if (response.status === 429 && attempt < this.maxRateLimitRetries) {
