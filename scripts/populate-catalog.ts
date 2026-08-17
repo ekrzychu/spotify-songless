@@ -1,66 +1,115 @@
 import "dotenv/config";
-import { CATEGORIES } from "../src/lib/catalog/category-config";
 import { upsertCatalogTrack } from "../src/lib/catalog/catalog-service";
 import {
+  CATALOG_POPULATION_CHECKPOINT_PATH,
+  loadCatalogPopulationCheckpoint,
+  resetCatalogPopulationCheckpoint,
+  saveCatalogPopulationCheckpointAtomic,
+} from "../src/lib/catalog/catalog-population-checkpoint";
+import {
+  CatalogPopulationArgumentError,
+  parseCatalogPopulationArgs,
+} from "../src/lib/catalog/catalog-population-plan";
+import {
+  CATALOG_SPOTIFY_RETRY_OPTIONS,
+  CatalogPopulationRunError,
+  catalogSpotifySearchPath,
+  executeCatalogPopulation,
+  formatCatalogPopulationSummary,
+} from "../src/lib/catalog/catalog-populator";
+import {
   getClientCredentialsToken,
+  SpotifyApiError,
   spotifyFetch,
   type SpotifySearchResponse,
 } from "../src/lib/spotify/api";
 import { db } from "../src/lib/db";
-import { paginateSpotifySearch } from "../src/lib/catalog/spotify-pagination";
-import {
-  backfillDerivedCategories,
-  formatDecadeAssociationSummary,
-} from "../src/lib/catalog/derived-categories";
 
-const resultsPerCategory = Math.min(Math.max(Number(process.env.CATALOG_RESULTS_PER_CATEGORY ?? 100), 10), 500);
-const market = process.env.SPOTIFY_MARKET ?? "US";
+const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+let interruptionRequested = false;
 
-const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+function requestInterruption(signal: string): void {
+  interruptionRequested = true;
+  console.log(`\n${signal} received. Finishing the current page so its checkpoint remains consistent...`);
+}
 
 async function main(): Promise<void> {
-  const token = await getClientCredentialsToken();
-  const total = { requests: 0, discovered: 0, created: 0, updated: 0 };
-  const uniqueTrackIds = new Set<string>();
-  for (const category of CATEGORIES.filter((item) => item.type === "genre" && item.spotifyQuery)) {
-    const pageResult = await paginateSpotifySearch(async ({ offset, limit }) => {
-      const params = new URLSearchParams({
-        q: category.spotifyQuery!, type: "track", limit: String(limit), offset: String(offset), market,
-      });
-      const response = await spotifyFetch<SpotifySearchResponse>(token, `/search?${params}`);
-      await delay(200);
-      return response;
-    }, resultsPerCategory);
-    const uniqueCategoryTracks = [...new Map(pageResult.items.map((track) => [track.id, track])).values()];
-    const categorySummary = { created: 0, updated: 0 };
-    for (const track of uniqueCategoryTracks) {
-      uniqueTrackIds.add(track.id);
-      const action = await upsertCatalogTrack(track, category.id);
-      categorySummary[action] += 1;
-    }
-    total.requests += pageResult.requests;
-    total.discovered += pageResult.items.length;
-    total.created += categorySummary.created;
-    total.updated += categorySummary.updated;
-    console.log([
-      category.label,
-      `  requests: ${pageResult.requests}`,
-      `  discovered: ${pageResult.items.length}`,
-      `  new: ${categorySummary.created}`,
-      `  updated: ${categorySummary.updated}`,
-    ].join("\n"));
+  const options = parseCatalogPopulationArgs(process.argv.slice(2));
+  const result = await executeCatalogPopulation(options, {
+    checkpointPath: CATALOG_POPULATION_CHECKPOINT_PATH,
+    countTracks: () => db.gameTrack.count(),
+    loadCheckpoint: (configuration, shards) => loadCatalogPopulationCheckpoint(
+      CATALOG_POPULATION_CHECKPOINT_PATH,
+      configuration,
+      shards,
+    ),
+    resetCheckpoint: () => resetCatalogPopulationCheckpoint(CATALOG_POPULATION_CHECKPOINT_PATH),
+    saveCheckpoint: (checkpoint) => saveCatalogPopulationCheckpointAtomic(
+      CATALOG_POPULATION_CHECKPOINT_PATH,
+      checkpoint,
+    ),
+    getAccessToken: getClientCredentialsToken,
+    fetchPage: async ({ token, shard, offset, limit, market }) => {
+      return spotifyFetch<SpotifySearchResponse>(
+        token,
+        catalogSpotifySearchPath(shard, offset, limit, market),
+        {},
+        CATALOG_SPOTIFY_RETRY_OPTIONS,
+      );
+    },
+    upsertTrack: upsertCatalogTrack,
+    delay,
+    shouldStop: () => interruptionRequested,
+    onProgress: (summary) => console.log(
+      `[progress] requests=${summary.requests} pages=${summary.pagesCompleted} created=${summary.tracksCreated} updated=${summary.tracksUpdated} total=${summary.currentTrackCount}`,
+    ),
+  });
+
+  if (result.mode === "plan") {
+    console.log(result.report);
+    return;
   }
-  console.log([
-    "\nTOTAL", `Requests: ${total.requests}`, `Discovered: ${total.discovered}`,
-    `Unique tracks: ${uniqueTrackIds.size}`, `Created: ${total.created}`, `Updated: ${total.updated}`,
-  ].join("\n"));
-  const decadeSummary = await backfillDerivedCategories();
-  console.log(`\n${formatDecadeAssociationSummary(decadeSummary)}`);
+
+  console.log(formatCatalogPopulationSummary(result.summary, CATALOG_POPULATION_CHECKPOINT_PATH));
+  if (["request-budget", "quota-exceeded", "interrupted"].includes(result.summary.reason)) {
+    console.log(`\nContinue with the same command:\n${continuationCommand()}`);
+  }
 }
+
+function continuationCommand(): string {
+  const args = process.argv.slice(2).join(" ");
+  return `npm run catalog:populate${args ? ` -- ${args}` : ""}`;
+}
+
+function printFailure(error: CatalogPopulationRunError): void {
+  const cause = error.cause;
+  const spotify = cause instanceof SpotifyApiError ? cause : null;
+  console.error([
+    "CATALOG POPULATION FAILED",
+    `Message: ${error.message}`,
+    `Last shard: ${error.summary.lastShard ?? "none"}`,
+    `Last offset: ${error.summary.lastOffset ?? "none"}`,
+    `Requests made this run: ${error.summary.requests}`,
+    `Current catalog count: ${error.summary.currentTrackCount}`,
+    `Checkpoint: ${CATALOG_POPULATION_CHECKPOINT_PATH}`,
+    ...(spotify ? [
+      `Spotify status: ${spotify.status}`,
+      `Spotify reason: ${spotify.reason ?? "none"}`,
+      `Spotify message: ${spotify.spotifyMessage ?? "none"}`,
+    ] : []),
+    "Progress through the last completed page is preserved.",
+    `Rerun: ${continuationCommand()}`,
+  ].join("\n"));
+}
+
+process.once("SIGINT", () => requestInterruption("SIGINT"));
+process.once("SIGTERM", () => requestInterruption("SIGTERM"));
 
 main()
   .catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : "Catalog population failed");
+    if (error instanceof CatalogPopulationRunError) printFailure(error);
+    else if (error instanceof CatalogPopulationArgumentError) console.error(`Catalog options error: ${error.message}`);
+    else console.error(error instanceof Error ? error.message : "Catalog population failed");
     process.exitCode = 1;
   })
   .finally(() => db.$disconnect());

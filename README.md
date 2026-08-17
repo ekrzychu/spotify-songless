@@ -42,7 +42,6 @@ SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/api/auth/spotify/callback
 SESSION_SECRET=
 DATABASE_URL=file:./dev.db
 ALLOWED_DEV_ORIGINS=127.0.0.1,192.168.0.15
-CATALOG_RESULTS_PER_CATEGORY=100
 SPOTIFY_MARKET=US
 ```
 
@@ -50,7 +49,7 @@ SPOTIFY_MARKET=US
 
 `ALLOWED_DEV_ORIGINS` is a comma-separated list of additional hostnames allowed to request Next.js development assets. The defaults already include `127.0.0.1` and `192.168.0.15`; the variable lets another local development hostname be added deliberately. It does not alter Spotify OAuth and has no effect on production CORS.
 
-`CATALOG_RESULTS_PER_CATEGORY` defaults to 100 and is capped at 500. Spotify Development Mode Search returns at most 10 results per request, so the default performs at most 10 sequential requests for each configured genre. `SPOTIFY_MARKET` defaults to `US`.
+`SPOTIFY_MARKET` defaults to `US` and is used by catalog discovery unless `--market` overrides it for one run.
 
 Soundcharts credentials are used only by the optional server-side diagnostic. Put them in `.env.local`, never in browser code:
 
@@ -86,12 +85,42 @@ The OAuth flow uses Authorization Code with PKCE, short-lived integrity-protecte
 ## Populate the Spotify catalog
 
 ```powershell
-npm run catalog:populate
+npm run catalog:status
+npm run catalog:populate -- --plan
+npm run catalog:populate -- --target=20000 --max-requests=500
 ```
 
-The command reads the centralized genre configuration, searches Spotify sequentially in pages of at most 10, follows pagination until the configured result target or the end of results, applies bounded `Retry-After` handling, deduplicates tracks, upserts metadata, and preserves every category association. It prints request, discovered, created, updated, unique-track, and derived-decade totals.
+Catalog discovery uses deterministic active-genre-by-release-year shards from 1970 through the current UTC year. It processes the lowest checkpointed offset first, giving every genre/year shard broad coverage before going deeper. Spotify Search requests remain sequential and use pages of at most 10.
 
-Catalog population does not assign difficulty. New tracks remain unranked until verified stream counts are imported.
+Progress is saved after every completed Spotify page at:
+
+```text
+.runtime/catalog-populate-checkpoint.json
+```
+
+Rerunning the same command resumes from that checkpoint. The default target is 20,000 unique database tracks, but each execution is capped at 500 Spotify Search page requests. Reaching that request budget is a clean resumable stop, not an error.
+
+Available controls are:
+
+```text
+--target=20000
+--year-from=1970
+--year-to=<current UTC year>
+--max-per-shard=100
+--max-requests=500
+--delay-ms=300
+--market=US
+--plan
+--reset-checkpoint
+```
+
+`--max-per-shard` can be increased on a later run without resetting progress. Use `--reset-checkpoint` only when intentionally changing checkpoint identity such as the market or year range. Plan mode reads only the local database and checkpoint; it does not request a Spotify access token or call Spotify Search.
+
+`npm run catalog:status` is also local-only. It reports total/playable and ranked/unranked counts plus active genre and decade pool coverage. Historical removed-category relations are not included in active pool reporting.
+
+Catalog population does not spend Soundcharts quota, does not call Soundcharts, does not assign difficulty, and does not invent stream counts. New tracks remain unranked until verified stream counts are imported. A fixed request count cannot guarantee 20,000 tracks because Spotify page exhaustion and duplicate track IDs vary by shard.
+
+Spotify rate limits use importer-specific bounded retries. A `QUOTA_EXCEEDED` response stops cleanly with the last completed-page checkpoint preserved for a later rerun.
 
 Decade membership is derived from each track's Spotify release date during ingestion, so catalog population only performs genre searches. To reconcile decade associations for tracks already in the local database without contacting Spotify, run:
 
