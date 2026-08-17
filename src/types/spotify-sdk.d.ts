@@ -13,7 +13,12 @@ declare global {
     onSpotifyWebPlaybackSDKReady?: () => void;
   }
 
-  type SpotifyPlayerState = { paused: boolean; position: number; duration: number };
+  type SpotifyPlayerState = {
+    paused: boolean;
+    position: number;
+    duration: number;
+    track_window?: { current_track?: { uri?: string } };
+  };
   type SpotifyError = { message: string };
   type SpotifyReady = { device_id: string };
 

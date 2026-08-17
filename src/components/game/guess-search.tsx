@@ -5,9 +5,15 @@ import type { SearchTrack } from "@/types/game";
 
 const searchCache = new Map<string, SearchTrack[]>();
 
-export function GuessSearch({ disabled, busy, onAttempt }: {
+export function attemptActionLabel(selected: boolean, finalAttempt: boolean): "Submit" | "Skip" | "Give up" {
+  if (selected) return "Submit";
+  return finalAttempt ? "Give up" : "Skip";
+}
+
+export function GuessSearch({ disabled, busy, finalAttempt, onAttempt }: {
   disabled: boolean;
   busy: boolean;
+  finalAttempt: boolean;
   onAttempt: (track: SearchTrack | null) => void;
 }) {
   const listId = useId();
@@ -105,7 +111,7 @@ export function GuessSearch({ disabled, busy, onAttempt }: {
         )}
       </div>
       <button className={selected ? "attempt-button attempt-button--submit" : "attempt-button"} disabled={disabled || busy} type="button" onClick={submit}>
-        {busy ? "Wait" : selected ? "Submit" : "Skip"}
+        {busy ? "Wait" : attemptActionLabel(Boolean(selected), finalAttempt)}
       </button>
     </div>
   );

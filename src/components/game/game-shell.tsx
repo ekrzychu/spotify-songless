@@ -13,6 +13,9 @@ import { EMPTY_STATS, readStats, recordResult, type LocalStats } from "@/lib/cli
 import { migrateStorageKey, STORAGE_KEYS } from "@/lib/client/storage";
 import { checkSpotifyConnection, oauthNotice, type SpotifyConnectionState } from "@/lib/client/spotify-connection";
 import { PlaybackRequestError, useSpotifyPlayer } from "@/hooks/use-spotify-player";
+import { getCategory } from "@/lib/catalog/category-config";
+import { DIFFICULTY_LABELS } from "@/lib/game/difficulty";
+import { MAX_ATTEMPTS } from "@/lib/game/snippets";
 import type { Difficulty, RoundView, SearchTrack } from "@/types/game";
 
 type Filters = { category: string; difficulty: Difficulty };
@@ -29,25 +32,32 @@ export function GameShell() {
   const [notice, setNotice] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<{ text: string; success: boolean } | null>(null);
   const [pendingFilters, setPendingFilters] = useState<Filters | null>(null);
+  const [exhaustedPool, setExhaustedPool] = useState<Filters | null>(null);
   const [stats, setStats] = useState<LocalStats>(EMPTY_STATS);
   const connected = connection === "connected";
   const player = useSpotifyPlayer(connected);
-  const pausePlayer = player.pause;
+  const resetPlayback = player.resetPlayback;
 
   const newRound = useCallback(async (nextFilters: Filters) => {
-    setLoadingRound(true); setNotice(null); await pausePlayer();
+    setLoadingRound(true); setNotice(null); setExhaustedPool(null); await resetPlayback();
     try {
       const response = await fetch("/api/game/round", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nextFilters),
       });
-      const payload = await response.json() as RoundView & { error?: string };
+      const payload = await response.json() as RoundView & { error?: string; code?: string };
+      if (response.status === 409 && payload.code === "pool_exhausted") {
+        setRound(null);
+        setExhaustedPool(nextFilters);
+        localStorage.removeItem(STORAGE_KEYS.round);
+        return;
+      }
       if (!response.ok) throw new Error(payload.error ?? "A song could not be loaded");
       setRound(payload);
       localStorage.setItem(STORAGE_KEYS.round, JSON.stringify({ id: payload.id, ...nextFilters }));
     } catch (error) {
       setRound(null); setNotice(error instanceof Error ? error.message : "A song could not be loaded");
     } finally { setLoadingRound(false); }
-  }, [pausePlayer]);
+  }, [resetPlayback]);
 
   const refreshConnection = useCallback(async () => {
     setConnection("checking");
@@ -110,16 +120,21 @@ export function GameShell() {
     else void player.playSnippet(round.spotifyUri, round.snippetLength).catch((error: unknown) => {
       if (error instanceof PlaybackRequestError && error.code === "track_unavailable") {
         setNotice("That track is unavailable here. Choosing another…");
-        void fetch(`/api/game/round/${round.id}/unavailable`, { method: "POST" })
+        void player.resetPlayback().then(() => fetch(`/api/game/round/${round.id}/unavailable`, { method: "POST" }))
           .then(async (response) => {
-            const payload = await response.json() as RoundView & { error?: string };
+            const payload = await response.json() as RoundView & { error?: string; code?: string };
+            if (response.status === 409 && payload.code === "pool_exhausted") {
+              setRound(null); setExhaustedPool(filters); setNotice(null);
+              localStorage.removeItem(STORAGE_KEYS.round);
+              return;
+            }
             if (!response.ok) throw new Error(payload.error);
-            setRound(payload); setNotice(null);
+            setRound(payload); setExhaustedPool(null); setNotice(null);
           })
           .catch((replacementError: unknown) => setNotice(replacementError instanceof Error ? replacementError.message : "No replacement was available"));
       } else setNotice(error instanceof Error ? error.message : "Playback failed");
     });
-  }, [loadingRound, player, round]);
+  }, [filters, loadingRound, player, round]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -133,7 +148,7 @@ export function GameShell() {
 
   const attempt = async (guess: SearchTrack | null) => {
     if (!round || round.finished || attemptBusy) return;
-    setAttemptBusy(true); setNotice(null); await player.pause();
+    setAttemptBusy(true); setNotice(null); await player.resetPlayback();
     try {
       const response = await fetch(`/api/game/round/${round.id}/attempt`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -191,21 +206,27 @@ export function GameShell() {
             <p>A Spotify Premium account is required for full-track browser playback.</p>
             <a href="/api/auth/spotify">Connect Spotify</a>
           </div>
+        ) : exhaustedPool ? (
+          <div className="connect-state pool-cleared" role="status">
+            <span className="connect-disc" aria-hidden="true" />
+            <h2>You cleared this set.</h2>
+            <p>You&apos;ve heard every available {getCategory(exhaustedPool.category)?.label ?? exhaustedPool.category} · {DIFFICULTY_LABELS[exhaustedPool.difficulty]} track. Switch the category or difficulty to keep digging.</p>
+          </div>
         ) : (
           <>
             <AttemptList attempts={round?.attempts ?? []} currentAttempt={round?.attempt ?? 0} finished={round?.finished ?? false} />
-            <DurationBar attempt={round?.attempt ?? 0} progress={player.progress} />
+            <DurationBar attempt={round?.attempt ?? 0} progressMs={player.progressMs} />
             <div className="play-area">
               <PlayButton playing={player.playing} disabled={!round || round.finished || !player.ready || loadingRound} onClick={play} />
               <p>{loadingRound ? "Choosing a song…" : player.status === "loading" ? "Preparing Spotify…" : player.status === "offline" ? "Player offline" : `Play ${round?.snippetLength ?? 0.1}s intro`}</p>
             </div>
-            <GuessSearch disabled={!round || round.finished || loadingRound} busy={attemptBusy} onAttempt={(guess) => void attempt(guess)} />
+            <GuessSearch disabled={!round || round.finished || loadingRound} busy={attemptBusy} finalAttempt={round?.attempt === MAX_ATTEMPTS - 1} onAttempt={(guess) => void attempt(guess)} />
           </>
         )}
 
         {authNotice && <div className={`notice${authNotice.success ? " notice--success" : ""}`} role="status">{authNotice.text}</div>}
         {(notice || player.error) && <div className="notice" role="status">{notice ?? player.error}</div>}
-        {connected && !loadingRound && !round && <button className="retry-button" type="button" onClick={() => void newRound(filters)}>Try again</button>}
+        {connected && !loadingRound && !round && !exhaustedPool && <button className="retry-button" type="button" onClick={() => void newRound(filters)}>Try again</button>}
       </section>
 
       <StatsSummary stats={stats} />

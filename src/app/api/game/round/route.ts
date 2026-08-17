@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createRound, NoTracksError } from "@/lib/game/round-service";
+import { createRound, NoTracksError, PoolExhaustedError } from "@/lib/game/round-service";
 import { getSessionId } from "@/lib/server/cookies";
 import { filterSchema } from "@/lib/validation";
 import { db } from "@/lib/db";
@@ -10,6 +10,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     return NextResponse.json(await createRound(await getSessionId(), parsed.data.category, parsed.data.difficulty));
   } catch (error) {
+    if (error instanceof PoolExhaustedError) {
+      return NextResponse.json({
+        code: "pool_exhausted",
+        error: "Every available song in this pool has already been played in this session.",
+      }, { status: 409 });
+    }
     if (error instanceof NoTracksError) {
       let message = "No songs are currently available for this combination. Try another category or difficulty.";
       if (process.env.NODE_ENV === "development") {

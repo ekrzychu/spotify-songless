@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { isCorrectGuess } from "@/lib/game/correctness";
 import { MAX_ATTEMPTS, applyAttempt, snippetLengthForAttempt } from "@/lib/game/snippets";
-import { getRandomTrack } from "@/lib/game/selection";
+import { selectRandomTrack } from "@/lib/game/selection";
 import type { Difficulty, RoundView, SearchTrack } from "@/types/game";
 
 type LoadedRound = GameRound & { track: GameTrack; attempts: RoundAttempt[] };
@@ -11,6 +11,7 @@ type LoadedRound = GameRound & { track: GameTrack; attempts: RoundAttempt[] };
 export class RoundNotFoundError extends Error {}
 export class RoundFinishedError extends Error {}
 export class NoTracksError extends Error {}
+export class PoolExhaustedError extends Error {}
 
 function reveal(track: GameTrack, difficulty: Difficulty) {
   return {
@@ -40,8 +41,10 @@ export function roundView(round: LoadedRound): RoundView {
 }
 
 export async function createRound(sessionId: string, category: string, difficulty: Difficulty): Promise<RoundView> {
-  const track = await getRandomTrack({ sessionId, category, difficulty });
-  if (!track) throw new NoTracksError();
+  const selection = await selectRandomTrack({ sessionId, category, difficulty });
+  if (selection.status === "empty") throw new NoTracksError();
+  if (selection.status === "exhausted") throw new PoolExhaustedError();
+  const track = selection.track;
   const round = await db.gameRound.create({
     data: { sessionId, trackId: track.id, categoryId: category, difficulty },
     include: { track: true, attempts: true },

@@ -230,11 +230,11 @@ a { color: inherit; }
 .duration-label.is-start::after { left: 0; }
 .duration-label.is-end { transform: translateX(-100%); }
 .duration-label.is-end::after { left: 100%; }
-.duration-track { height: 5px; display: flex; gap: 2px; background: transparent; }
+.duration-track { height: 5px; display: flex; gap: 2px; background: transparent; position: relative; }
 .duration-segment { height: 5px; min-width: 3px; background: #2c2e2e; overflow: hidden; position: relative; }
 .duration-segment::after { content: ""; position: absolute; inset: 0; background: #535756; opacity: 0; }
 .duration-segment.is-unlocked::after { opacity: 1; }
-.duration-segment > span { position: absolute; z-index: 1; inset: 0; background: var(--accent); transform-origin: left; }
+.duration-fill { position: absolute; z-index: 1; inset: 0; background: var(--accent); transform-origin: left; pointer-events: none; }
 .duration-scale { display: flex; justify-content: space-between; color: var(--text-faint); font-size: 10px; margin-top: 7px; }
 
 .play-area { display: flex; flex-direction: column; align-items: center; min-height: 108px; }

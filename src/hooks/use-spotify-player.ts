@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SnippetPlaybackController } from "@/lib/spotify/snippet-playback";
 
 type PlayerStatus = "loading" | "ready" | "offline" | "error";
 
@@ -13,26 +14,25 @@ export class PlaybackRequestError extends Error {
 
 export function useSpotifyPlayer(enabled: boolean) {
   const playerRef = useRef<SpotifyPlayer | null>(null);
-  const timerRef = useRef<number | null>(null);
-  const monitorRef = useRef<number | null>(null);
+  const controllerRef = useRef<SnippetPlaybackController | null>(null);
   const [status, setStatus] = useState<PlayerStatus>(enabled ? "loading" : "offline");
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [progressMs, setProgressMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const clearTimers = useCallback(() => {
-    if (timerRef.current) window.clearTimeout(timerRef.current);
-    if (monitorRef.current) window.clearInterval(monitorRef.current);
-    timerRef.current = null;
-    monitorRef.current = null;
+  const pause = useCallback(async () => {
+    if (controllerRef.current) await controllerRef.current.stop(false);
+    else await playerRef.current?.pause();
   }, []);
 
-  const pause = useCallback(async () => {
-    clearTimers();
-    await playerRef.current?.pause();
-    setPlaying(false);
-  }, [clearTimers]);
+  const resetPlayback = useCallback(async () => {
+    if (controllerRef.current) await controllerRef.current.stop(true);
+    else {
+      setProgressMs(0);
+      await playerRef.current?.pause();
+    }
+  }, []);
 
   useEffect(() => {
     if (!enabled) return;
@@ -54,15 +54,17 @@ export function useSpotifyPlayer(enabled: boolean) {
         },
       });
       playerRef.current = player;
+      const controller = new SnippetPlaybackController(player, { onPlaying: setPlaying, onProgress: setProgressMs });
+      controllerRef.current = controller;
       player.addListener("ready", ({ device_id }) => {
         setDeviceId(device_id); setStatus("ready"); setError(null);
       });
       player.addListener("not_ready", () => { setStatus("offline"); setDeviceId(null); });
-      player.addListener("player_state_changed", (state) => setPlaying(Boolean(state && !state.paused)));
+      player.addListener("player_state_changed", (state) => controller.handleState(state));
       player.addListener("account_error", () => { setStatus("error"); setError("Spotify Premium is required for browser playback."); });
       player.addListener("authentication_error", () => { setStatus("error"); setError("Spotify needs to be reconnected."); });
       player.addListener("initialization_error", () => { setStatus("error"); setError("This browser could not initialize Spotify playback."); });
-      player.addListener("playback_error", () => { setPlaying(false); setError("This track could not be played."); });
+      player.addListener("playback_error", () => { void controller.stop(false); setError("This track could not be played."); });
       player.addListener("autoplay_failed", () => setError("Press Play again to allow audio in this browser."));
       void player.connect().then((connected) => { if (!connected) setStatus("error"); });
     };
@@ -77,38 +79,34 @@ export function useSpotifyPlayer(enabled: boolean) {
       }
     }
     return () => {
-      disposed = true; clearTimers(); playerRef.current?.disconnect(); playerRef.current = null;
+      disposed = true;
+      const player = playerRef.current;
+      const controller = controllerRef.current;
+      controllerRef.current = null;
+      playerRef.current = null;
+      if (controller && player) void controller.stop(false).finally(() => player.disconnect());
+      else player?.disconnect();
     };
-  }, [enabled, clearTimers]);
+  }, [enabled]);
 
   const playSnippet = useCallback(async (spotifyUri: string, durationSeconds: number) => {
     const player = playerRef.current;
     if (!player || !deviceId || status !== "ready") throw new Error("Spotify player is not ready");
-    clearTimers(); setProgress(0); setError(null);
-    await player.activateElement();
-    await player.pause().catch(() => undefined);
-    await player.seek(0).catch(() => undefined);
-    const response = await fetch("/api/spotify/playback", {
-      method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deviceId, spotifyUri, positionMs: 0 }),
-    });
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
-      throw new PlaybackRequestError(payload?.code ?? "playback_failed", payload?.error ?? "Playback failed");
-    }
-    setPlaying(true);
     const durationMs = durationSeconds * 1000;
-    const startedAt = performance.now();
-    timerRef.current = window.setTimeout(() => void pause(), durationMs);
-    monitorRef.current = window.setInterval(() => {
-      void player.getCurrentState().then((state) => {
-        if (!state || state.paused) return;
-        const elapsed = Math.max(state.position, performance.now() - startedAt);
-        setProgress(Math.min(elapsed / durationMs, 1));
-        if (elapsed >= durationMs) void pause();
+    setError(null);
+    const controller = controllerRef.current;
+    if (!controller) throw new Error("Spotify player is not ready");
+    await controller.play(spotifyUri, durationMs, async () => {
+      const response = await fetch("/api/spotify/playback", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, spotifyUri, positionMs: 0 }),
       });
-    }, 40);
-  }, [clearTimers, deviceId, pause, status]);
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
+        throw new PlaybackRequestError(payload?.code ?? "playback_failed", payload?.error ?? "Playback failed");
+      }
+    });
+  }, [deviceId, status]);
 
-  return { status, playing, progress, error, playSnippet, pause, ready: status === "ready" };
+  return { status, playing, progressMs, error, playSnippet, pause, resetPlayback, ready: status === "ready" };
 }
