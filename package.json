@@ -18,6 +18,7 @@
     "db:push": "tsx --env-file=.env.local scripts/push-db.ts",
     "catalog:populate": "tsx --env-file=.env.local scripts/populate-catalog.ts",
     "catalog:backfill-decades": "tsx --env-file=.env.local scripts/backfill-decade-categories.ts",
+    "soundcharts:test": "tsx --env-file=.env.local scripts/test-soundcharts.ts",
     "import:streams": "tsx --env-file=.env.local scripts/import-streams.ts",
     "postinstall": "prisma generate"
   },

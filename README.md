@@ -50,7 +50,14 @@ SPOTIFY_MARKET=US
 
 `ALLOWED_DEV_ORIGINS` is a comma-separated list of additional hostnames allowed to request Next.js development assets. The defaults already include `127.0.0.1` and `192.168.0.15`; the variable lets another local development hostname be added deliberately. It does not alter Spotify OAuth and has no effect on production CORS.
 
-`CATALOG_RESULTS_PER_CATEGORY` defaults to 100 and is capped at 500. Spotify Development Mode Search returns at most 10 results per request, so the default performs at most 10 sequential requests for each configured genre or decade. `SPOTIFY_MARKET` defaults to `US`.
+`CATALOG_RESULTS_PER_CATEGORY` defaults to 100 and is capped at 500. Spotify Development Mode Search returns at most 10 results per request, so the default performs at most 10 sequential requests for each configured genre. `SPOTIFY_MARKET` defaults to `US`.
+
+Soundcharts credentials are used only by the optional server-side diagnostic. Put them in `.env.local`, never in browser code:
+
+```env
+SOUNDCHARTS_CLIENT_ID=
+SOUNDCHARTS_CLIENT_SECRET=
+```
 
 ## Initial installation
 
@@ -92,6 +99,16 @@ npm run catalog:backfill-decades
 ```
 
 The backfill preserves genre associations, upserts the matching decade relation for release years from 1970 through 2029, removes stale decade relations, and prints the resulting count for every decade.
+
+## Verify Soundcharts access
+
+To test Soundcharts resolution and Spotify audience access against 10 deterministic, unranked catalog tracks, run:
+
+```powershell
+npm run soundcharts:test
+```
+
+Use a smaller diagnostic batch with `npm run soundcharts:test -- --limit 5`; values above 10 are clamped to 10. The command uses the current client-credentials flow, performs no database writes, prints its approximate request count, and does not classify or import returned values. A returned Spotify audience value must not be treated as verified lifetime streams until the live results are reviewed.
 
 ## Import verified lifetime stream counts
 
