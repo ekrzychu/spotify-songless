@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createRound, NoTracksError } from "@/lib/game/round-service";
 import { getSessionId } from "@/lib/server/cookies";
 import { filterSchema } from "@/lib/validation";
+import { db } from "@/lib/db";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const parsed = filterSchema.safeParse(await request.json().catch(() => null));
@@ -10,8 +11,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json(await createRound(await getSessionId(), parsed.data.category, parsed.data.difficulty));
   } catch (error) {
     if (error instanceof NoTracksError) {
+      let message = "No songs are currently available for this combination. Try another category or difficulty.";
+      if (process.env.NODE_ENV === "development") {
+        const [catalogTracks, rankedTracks] = await Promise.all([
+          db.gameTrack.count(),
+          db.gameTrack.count({ where: { playable: true, streamCount: { not: null } } }),
+        ]);
+        if (catalogTracks > 0 && rankedTracks === 0) {
+          message = "No ranked songs are available yet. Import verified stream-count data to enable gameplay.";
+        }
+      }
       return NextResponse.json({
-        error: "No songs are currently available for this combination. Try another category or difficulty.",
+        error: message,
       }, { status: 404 });
     }
     if (process.env.NODE_ENV === "development") console.error(error);

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Needle Drop — Unlimited song guessing",
+  title: "spodle — unlimited song guessing",
   description: "Guess the Spotify song from a progressively longer intro.",
 };
 

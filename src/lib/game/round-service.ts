@@ -105,7 +105,11 @@ export async function replaceUnavailableRound(roundId: string, sessionId: string
   const round = await db.gameRound.findFirst({ where: { id: roundId, sessionId } });
   if (!round) throw new RoundNotFoundError();
   await db.$transaction([
-    db.gameTrack.update({ where: { id: round.trackId }, data: { playable: false } }),
+    db.sessionUnavailableTrack.upsert({
+      where: { sessionId_trackId: { sessionId, trackId: round.trackId } },
+      create: { sessionId, trackId: round.trackId },
+      update: {},
+    }),
     db.gameRound.update({ where: { id: round.id }, data: { finished: true, finishedAt: new Date() } }),
   ]);
   return createRound(sessionId, round.categoryId, round.difficulty as Difficulty);

@@ -1,99 +1,137 @@
-# Needle Drop
+# spodle
 
-Needle Drop is an unlimited Spotify song-guessing game. Each failed guess or skip unlocks a longer intro: 0.1, 1, 2, 5, 10, then 15 seconds. Difficulty is derived only from imported, verified lifetime stream counts; tracks without a count are excluded from ranked play.
+spodle is an unlimited Spotify song-guessing game. Each failed guess or skip unlocks a longer intro: 0.1, 1, 2, 5, 10, then 15 seconds. Difficulty comes only from imported, verified lifetime stream counts; unranked tracks are never used in ranked play.
 
-## Prerequisites
+## Requirements
 
-- Node.js 20.11 or newer and npm
-- A Spotify Premium account for Web Playback SDK playback
-- A Spotify Developer application with **Web API** and **Web Playback SDK** selected
-- A CSV or another verified data source for lifetime stream counts (Spotify does not provide this metric)
+- Node.js 20.11 or newer
+- npm
+- A Spotify Premium account
+- A Spotify Developer application
+- A verified external source of Spotify lifetime stream counts
 
-## Spotify setup
+The app uses SQLite through Prisma for local development. It does not download, proxy, modify, or store Spotify audio.
 
-1. Create an app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
-2. Enable Web API and Web Playback SDK access.
-3. Add `http://127.0.0.1:3000/api/auth/spotify/callback` as a redirect URI. Spotify requires an exact match; use the same host everywhere.
-4. Copy `.env.example` to `.env.local` and add the client ID and secret. The secret is used only by the server-side catalog command; browser login uses Authorization Code with PKCE.
-5. Generate a random `SESSION_SECRET` of at least 32 characters.
+## Spotify Dashboard
 
-The user authorization requests these scopes:
+In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), configure the application with:
 
-- `streaming` for the browser player
-- `user-read-private` and `user-read-email`, required by Spotify's Web Playback integration
-- `user-read-playback-state` and `user-modify-playback-state` to target the SDK device and start the selected track
+- Web API
+- Web Playback SDK
+- Redirect URI: `http://127.0.0.1:3000/api/auth/spotify/callback`
 
-Tokens are encrypted in secure, HTTP-only cookies. The client can obtain a short-lived access token only from the authenticated token route because the Web Playback SDK requires it. Refresh tokens and the client secret are never returned to browser JavaScript.
+Under **User Management**, add every Spotify account that will test the Development Mode application. Spotify Development Mode currently requires Premium and limits authorized users.
 
-## Environment variables
+The redirect URI must match exactly. Do not replace `127.0.0.1` with `localhost` or a LAN address, and do not derive it from the browser hostname.
+
+## Windows environment setup
+
+From PowerShell in the project directory, create the local environment file:
+
+```powershell
+Copy-Item .env.example .env.local
+notepad .env.local
+```
+
+Configure these values:
 
 ```env
 SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/api/auth/spotify/callback
-SESSION_SECRET=replace-with-at-least-32-random-characters
+SESSION_SECRET=
 DATABASE_URL=file:./dev.db
+ALLOWED_DEV_ORIGINS=127.0.0.1,192.168.0.15
+CATALOG_RESULTS_PER_CATEGORY=100
+SPOTIFY_MARKET=US
 ```
 
-Optional catalog settings are `SPOTIFY_MARKET` (default `US`) and `CATALOG_PAGES_PER_CATEGORY` (default `2`, maximum `10`). Never commit `.env.local`, credentials, or tokens.
+`SESSION_SECRET` must be a random value of at least 32 characters. Never commit `.env.local` or share its contents.
 
-## Install and database setup
+`ALLOWED_DEV_ORIGINS` is a comma-separated list of additional hostnames allowed to request Next.js development assets. The defaults already include `127.0.0.1` and `192.168.0.15`; the variable lets another local development hostname be added deliberately. It does not alter Spotify OAuth and has no effect on production CORS.
 
-```bash
+`CATALOG_RESULTS_PER_CATEGORY` defaults to 100 and is capped at 500. Spotify Development Mode Search returns at most 10 results per request, so the default performs at most 10 sequential requests for each configured genre or decade. `SPOTIFY_MARKET` defaults to `US`.
+
+## Initial installation
+
+```powershell
 npm install
 npm run db:push
 ```
 
-The database command loads `.env.local`, creates the SQLite file when necessary, and applies the Prisma schema. The schema keeps catalog ingestion separate from round and attempt records, and can be migrated to PostgreSQL by changing the datasource and creating a migration.
+`db:push` loads `.env.local`, creates the SQLite file when necessary, and applies the Prisma schema. Existing `dev.db` data does not need to be deleted; the session-unavailable-track table is an additive schema change.
 
-## Populate the catalog
+## Development
 
-```bash
-npm run catalog:populate
-```
-
-The command queries each configured genre and decade sequentially, honors Spotify `Retry-After` responses with a bounded retry, upserts track metadata, and records category associations. It does not invent stream counts, so newly ingested tracks remain unranked until enrichment.
-
-## Import verified stream counts
-
-Prepare a CSV like `data/stream-counts.example.csv`:
-
-```csv
-spotify_track_id,isrc,stream_count
-4cOdK2wGLETKBW3PvgPWqT,USXXXXXXXXX,1234567890
-```
-
-Then run:
-
-```bash
-npm run import:streams -- ./data/streams.csv
-```
-
-Rows are validated, matched by Spotify track ID first and ISRC second, updated, and reclassified using the central thresholds. The command prints read, matched, updated, missing, and invalid totals and returns a non-zero status when invalid rows are present.
-
-## Run
-
-```bash
+```powershell
 npm run dev
 ```
 
-Open `http://127.0.0.1:3000` so the host matches the configured redirect URI. Connect a Premium account, select a category and difficulty, and play. Current filters, active round ID, session track history, and lightweight player statistics persist locally or in the anonymous server session as appropriate.
+Open exactly:
+
+```text
+http://127.0.0.1:3000
+```
+
+The OAuth flow uses Authorization Code with PKCE, short-lived integrity-protected authorization attempts, encrypted HTTP-only token storage, and automatic refresh. The browser receives only the short-lived access token required by the Web Playback SDK. The client secret and refresh token remain server-side.
+
+## Populate the Spotify catalog
+
+```powershell
+npm run catalog:populate
+```
+
+The command reads the centralized genre/decade configuration, searches Spotify sequentially in pages of at most 10, follows pagination until the configured result target or the end of results, applies bounded `Retry-After` handling, deduplicates tracks, upserts metadata, and preserves every category association. It prints request, discovered, created, updated, and unique-track totals.
+
+Catalog population does not assign difficulty. New tracks remain unranked until verified stream counts are imported.
+
+## Import verified lifetime stream counts
+
+Prepare a CSV at `data\streams.csv` with this header:
+
+```csv
+spotify_track_id,isrc,stream_count
+```
+
+Run:
+
+```powershell
+npm run import:streams -- .\data\streams.csv
+```
+
+Rows are matched by Spotify track ID first and normalized ISRC second. The importer rejects malformed identifiers, negative or unsafe counts, duplicate conflicts, and inconsistent values. It reports read, matched, updated, unchanged, missing, invalid, and conflict totals. It never invents missing counts.
 
 ## Verification
 
-```bash
+Run the unit and production checks:
+
+```powershell
 npm run lint
 npm run typecheck
 npm test
 npm run build
 ```
 
-Tests cover difficulty boundaries, ID/ISRC answer matching, ranked/category selection and exclusions, every snippet duration, replay behavior, round transitions, and invalid API input shapes.
+Install Playwright's browser once, then run the mocked browser suite:
+
+```powershell
+npx playwright install chromium
+npm run test:browser
+```
+
+The browser tests do not automate a real Spotify login. They mock the Spotify-facing application layer and verify hydration, connection states, custom filter accessibility, attempts, result focus, Next Song, and mobile overflow.
+
+## Local data and security
+
+- `.env`, `.env.local`, and `.env.*.local` are ignored by git.
+- `dev.db` is ignored by git.
+- Spotify tokens are never logged.
+- Authentication cookies keep their existing `nd_*` names so current local sessions are not broken by the spodle branding change.
+- Existing `needle-drop:filters`, `needle-drop:round`, and `needle-drop:stats` values are copied to their new `spodle:*` names only when the new key is absent. Legacy keys are left untouched.
 
 ## Platform constraints
 
-- Audio is streamed directly by Spotify's Web Playback SDK. The app never downloads, proxies, modifies, or stores audio.
-- Spotify Premium is required for playback.
-- Spotify does not expose lifetime stream counts in its Web API. A verified external CSV is therefore required before tracks become eligible for difficulty-filtered games.
-- The Spotify URI must reach the browser to initiate playback and can be inspected by a determined user. Server-owned answer metadata and attempt validation provide reasonable game integrity, not DRM.
-- Spotify platform policy currently restricts commercial streaming applications and synchronization of Spotify content with visual media. Review the current [Web Playback SDK documentation](https://developer.spotify.com/documentation/web-playback-sdk) before deployment.
+- Spotify Premium is required for Web Playback SDK playback.
+- Spotify does not expose lifetime stream counts through the Web API. A verified external dataset is still required before gameplay has eligible tracks.
+- Spotify URIs necessarily reach the browser for playback and can be inspected by a determined user. Server-owned round and answer validation provide reasonable game integrity, not DRM.
+- Review Spotify's current [Web Playback SDK documentation](https://developer.spotify.com/documentation/web-playback-sdk) and platform policies before deployment.

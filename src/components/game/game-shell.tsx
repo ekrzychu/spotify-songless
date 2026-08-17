@@ -8,27 +8,30 @@ import { GuessSearch } from "@/components/game/guess-search";
 import { PlayButton } from "@/components/game/play-button";
 import { ResultPanel } from "@/components/game/result-panel";
 import { StatsSummary } from "@/components/game/stats-summary";
+import { ConfirmDialog } from "@/components/game/confirm-dialog";
 import { EMPTY_STATS, readStats, recordResult, type LocalStats } from "@/lib/client/stats";
-import { useSpotifyPlayer } from "@/hooks/use-spotify-player";
+import { migrateStorageKey, STORAGE_KEYS } from "@/lib/client/storage";
+import { checkSpotifyConnection, oauthNotice, type SpotifyConnectionState } from "@/lib/client/spotify-connection";
+import { PlaybackRequestError, useSpotifyPlayer } from "@/hooks/use-spotify-player";
 import type { Difficulty, RoundView, SearchTrack } from "@/types/game";
 
 type Filters = { category: string; difficulty: Difficulty };
 type SavedRound = { id: string; category: string; difficulty: Difficulty };
 const DEFAULT_FILTERS: Filters = { category: "all", difficulty: "normal" };
-const FILTER_KEY = "needle-drop:filters";
-const ROUND_KEY = "needle-drop:round";
 
 export function GameShell() {
-  const [connected, setConnected] = useState<boolean | null>(null);
+  const [connection, setConnection] = useState<SpotifyConnectionState>("checking");
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [hydrated, setHydrated] = useState(false);
   const [round, setRound] = useState<RoundView | null>(null);
   const [loadingRound, setLoadingRound] = useState(false);
   const [attemptBusy, setAttemptBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<{ text: string; success: boolean } | null>(null);
   const [pendingFilters, setPendingFilters] = useState<Filters | null>(null);
   const [stats, setStats] = useState<LocalStats>(EMPTY_STATS);
-  const player = useSpotifyPlayer(connected === true);
+  const connected = connection === "connected";
+  const player = useSpotifyPlayer(connected);
   const pausePlayer = player.pause;
 
   const newRound = useCallback(async (nextFilters: Filters) => {
@@ -40,31 +43,45 @@ export function GameShell() {
       const payload = await response.json() as RoundView & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "A song could not be loaded");
       setRound(payload);
-      localStorage.setItem(ROUND_KEY, JSON.stringify({ id: payload.id, ...nextFilters }));
+      localStorage.setItem(STORAGE_KEYS.round, JSON.stringify({ id: payload.id, ...nextFilters }));
     } catch (error) {
       setRound(null); setNotice(error instanceof Error ? error.message : "A song could not be loaded");
     } finally { setLoadingRound(false); }
   }, [pausePlayer]);
 
+  const refreshConnection = useCallback(async () => {
+    setConnection("checking");
+    try {
+      const isConnected = await checkSpotifyConnection();
+      setConnection(isConnected ? "connected" : "disconnected");
+      const url = new URL(window.location.href);
+      setAuthNotice(oauthNotice(url.searchParams.get("auth"), isConnected));
+      if (url.searchParams.has("auth")) {
+        url.searchParams.delete("auth");
+        history.replaceState(history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    } catch (error) {
+      setConnection("error");
+      if (process.env.NODE_ENV === "development") console.error("Spotify connection status check failed", error);
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     let stored = DEFAULT_FILTERS;
-    try { stored = { ...DEFAULT_FILTERS, ...JSON.parse(localStorage.getItem(FILTER_KEY) ?? "{}") as Partial<Filters> }; } catch { /* defaults */ }
+    try { stored = { ...DEFAULT_FILTERS, ...JSON.parse(migrateStorageKey("filters") ?? "{}") as Partial<Filters> }; } catch { /* defaults */ }
     queueMicrotask(() => {
       if (!active) return;
       setFilters(stored); setStats(readStats()); setHydrated(true);
     });
-    void fetch("/api/auth/status", { cache: "no-store" })
-      .then((response) => response.json() as Promise<{ connected: boolean }>)
-      .then((value) => { if (active) setConnected(value.connected); })
-      .catch(() => { if (active) setConnected(false); });
+    void Promise.resolve().then(() => { if (active) return refreshConnection(); });
     return () => { active = false; };
-  }, []);
+  }, [refreshConnection]);
 
   useEffect(() => {
     if (!hydrated || !connected) return;
     let saved: SavedRound | null = null;
-    try { saved = JSON.parse(localStorage.getItem(ROUND_KEY) ?? "null") as SavedRound | null; } catch { /* new round */ }
+    try { saved = JSON.parse(migrateStorageKey("round") ?? "null") as SavedRound | null; } catch { /* new round */ }
     if (saved && saved.category === filters.category && saved.difficulty === filters.difficulty) {
       void Promise.resolve().then(() => {
         setLoadingRound(true);
@@ -91,7 +108,7 @@ export function GameShell() {
     if (!round || round.finished || loadingRound) return;
     if (player.playing) void player.pause();
     else void player.playSnippet(round.spotifyUri, round.snippetLength).catch((error: unknown) => {
-      if (error instanceof Error && error.message === "TRACK_UNAVAILABLE") {
+      if (error instanceof PlaybackRequestError && error.code === "track_unavailable") {
         setNotice("That track is unavailable here. Choosing another…");
         void fetch(`/api/game/round/${round.id}/unavailable`, { method: "POST" })
           .then(async (response) => {
@@ -130,7 +147,7 @@ export function GameShell() {
   };
 
   const applyFilters = (next: Filters) => {
-    setFilters(next); localStorage.setItem(FILTER_KEY, JSON.stringify(next));
+    setFilters(next); localStorage.setItem(STORAGE_KEYS.filters, JSON.stringify(next));
     setPendingFilters(null); void newRound(next);
   };
 
@@ -139,10 +156,13 @@ export function GameShell() {
     else applyFilters(next);
   };
 
+  const modalOpen = Boolean((round?.finished && round.answer) || pendingFilters);
+
   return (
-    <main className="game-shell">
+    <>
+    <main className="game-shell" inert={modalOpen || undefined}>
       <header className="site-header">
-        <div><span className="wordmark-mark" aria-hidden="true" /><h1>Needle Drop</h1></div>
+        <div><span className="wordmark-mark" aria-hidden="true" /><h1>spodle</h1></div>
         {connected && <button className="connection" type="button" onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => location.reload())}><span />Spotify</button>}
       </header>
 
@@ -152,12 +172,19 @@ export function GameShell() {
           <FilterBar category={filters.category} difficulty={filters.difficulty} disabled={!connected || loadingRound} onChange={requestFilters} />
         </div>
 
-        {connected === null ? (
+        {connection === "checking" ? (
           <div className="connect-state connect-state--loading" role="status">
             <span className="connect-disc" aria-hidden="true" />
             <p>Checking Spotify connection…</p>
           </div>
-        ) : connected === false ? (
+        ) : connection === "error" ? (
+          <div className="connect-state" role="alert">
+            <span className="connect-disc" aria-hidden="true" />
+            <h2>Could not check Spotify connection</h2>
+            <p>The request did not complete. Check the development server and try again.</p>
+            <button className="connect-button" type="button" onClick={() => void refreshConnection()}>Try again</button>
+          </div>
+        ) : !connected ? (
           <div className="connect-state">
             <span className="connect-disc" aria-hidden="true" />
             <h2>Connect Spotify to play</h2>
@@ -176,6 +203,7 @@ export function GameShell() {
           </>
         )}
 
+        {authNotice && <div className={`notice${authNotice.success ? " notice--success" : ""}`} role="status">{authNotice.text}</div>}
         {(notice || player.error) && <div className="notice" role="status">{notice ?? player.error}</div>}
         {connected && !loadingRound && !round && <button className="retry-button" type="button" onClick={() => void newRound(filters)}>Try again</button>}
       </section>
@@ -183,16 +211,9 @@ export function GameShell() {
       <StatsSummary stats={stats} />
       <footer><span>Six chances. No daily limit.</span><span>Space to play</span></footer>
 
-      {round?.finished && round.answer && <ResultPanel won={round.won} attempts={round.attempts.length} answer={round.answer} onNext={() => void newRound(filters)} />}
-      {pendingFilters && (
-        <div className="confirm-backdrop">
-          <section className="confirm-panel" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
-            <h2 id="confirm-title">Start a new song?</h2>
-            <p>Your progress on this song will be left behind.</p>
-            <div><button type="button" onClick={() => setPendingFilters(null)}>Keep playing</button><button type="button" onClick={() => applyFilters(pendingFilters)}>Start new song</button></div>
-          </section>
-        </div>
-      )}
     </main>
+    {round?.finished && round.answer && <ResultPanel won={round.won} attempts={round.attempts.length} answer={round.answer} onNext={() => void newRound(filters)} />}
+    {pendingFilters && <ConfirmDialog onCancel={() => setPendingFilters(null)} onConfirm={() => applyFilters(pendingFilters)} />}
+    </>
   );
 }

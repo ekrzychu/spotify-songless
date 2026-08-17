@@ -9,29 +9,39 @@ export type SelectionInput = {
 };
 
 export async function getRandomTrack(input: SelectionInput) {
-  const played = await db.gameRound.findMany({
-    where: { sessionId: input.sessionId },
-    select: { trackId: true },
-    orderBy: { createdAt: "desc" },
-  });
+  const [played, unavailable] = await Promise.all([
+    db.gameRound.findMany({
+      where: { sessionId: input.sessionId },
+      select: { trackId: true },
+      orderBy: { createdAt: "desc" },
+    }),
+    db.sessionUnavailableTrack.findMany({
+      where: { sessionId: input.sessionId },
+      select: { trackId: true },
+    }),
+  ]);
   const baseWhere: Prisma.GameTrackWhereInput = {
     playable: true,
     streamCount: { not: null },
     difficulty: input.difficulty,
     ...(input.category === "all" ? {} : { categories: { some: { categoryId: input.category } } }),
   };
-  const excluded = [...new Set(played.map((round) => round.trackId))];
-  let where: Prisma.GameTrackWhereInput = excluded.length
-    ? { ...baseWhere, id: { notIn: excluded } }
-    : baseWhere;
-  let count = await db.gameTrack.count({ where });
-
-  // Once a finite catalog is exhausted, keep only the most recent track excluded.
-  if (count === 0 && excluded.length > 0) {
-    where = { ...baseWhere, id: { not: excluded[0]! } };
-    count = await db.gameTrack.count({ where });
+  const playedIds = [...new Set(played.map((round) => round.trackId))];
+  const unavailableIds = [...new Set(unavailable.map((item) => item.trackId))];
+  const selectionTiers = [
+    [...new Set([...unavailableIds, ...playedIds])],
+    [...new Set([...unavailableIds, ...(playedIds[0] ? [playedIds[0]] : [])])],
+    unavailableIds,
+  ];
+  for (const excluded of selectionTiers) {
+    const where: Prisma.GameTrackWhereInput = excluded.length
+      ? { ...baseWhere, id: { notIn: excluded } }
+      : baseWhere;
+    const count = await db.gameTrack.count({ where });
+    if (count > 0) {
+      return db.gameTrack.findFirst({ where, skip: Math.floor(Math.random() * count) });
+    }
+    if (playedIds.length === 0) break;
   }
-  if (count === 0) return null;
-  const skip = Math.floor(Math.random() * count);
-  return db.gameTrack.findFirst({ where, skip });
+  return null;
 }

@@ -7,35 +7,49 @@ import {
   type SpotifySearchResponse,
 } from "../src/lib/spotify/api";
 import { db } from "../src/lib/db";
+import { paginateSpotifySearch } from "../src/lib/catalog/spotify-pagination";
 
-const pagesPerCategory = Math.min(Math.max(Number(process.env.CATALOG_PAGES_PER_CATEGORY ?? 2), 1), 10);
+const resultsPerCategory = Math.min(Math.max(Number(process.env.CATALOG_RESULTS_PER_CATEGORY ?? 100), 10), 500);
 const market = process.env.SPOTIFY_MARKET ?? "US";
 
 const delay = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function main(): Promise<void> {
   const token = await getClientCredentialsToken();
-  let discovered = 0;
-  let saved = 0;
+  const total = { requests: 0, discovered: 0, created: 0, updated: 0 };
+  const uniqueTrackIds = new Set<string>();
   for (const category of CATEGORIES.filter((item) => item.spotifyQuery)) {
-    process.stdout.write(`${category.label}: `);
-    for (let page = 0; page < pagesPerCategory; page += 1) {
+    const pageResult = await paginateSpotifySearch(async ({ offset, limit }) => {
       const params = new URLSearchParams({
-        q: category.spotifyQuery!, type: "track", limit: "50", offset: String(page * 50), market,
+        q: category.spotifyQuery!, type: "track", limit: String(limit), offset: String(offset), market,
       });
       const response = await spotifyFetch<SpotifySearchResponse>(token, `/search?${params}`);
-      discovered += response.tracks.items.length;
-      for (const track of response.tracks.items) {
-        await upsertCatalogTrack(track, category.id);
-        saved += 1;
-      }
-      process.stdout.write(`${response.tracks.items.length}${page < pagesPerCategory - 1 ? "+" : ""}`);
-      if (!response.tracks.next) break;
-      await delay(150);
+      await delay(200);
+      return response;
+    }, resultsPerCategory);
+    const uniqueCategoryTracks = [...new Map(pageResult.items.map((track) => [track.id, track])).values()];
+    const categorySummary = { created: 0, updated: 0 };
+    for (const track of uniqueCategoryTracks) {
+      uniqueTrackIds.add(track.id);
+      const action = await upsertCatalogTrack(track, category.id);
+      categorySummary[action] += 1;
     }
-    process.stdout.write(" tracks\n");
+    total.requests += pageResult.requests;
+    total.discovered += pageResult.items.length;
+    total.created += categorySummary.created;
+    total.updated += categorySummary.updated;
+    console.log([
+      category.label,
+      `  requests: ${pageResult.requests}`,
+      `  discovered: ${pageResult.items.length}`,
+      `  new: ${categorySummary.created}`,
+      `  updated: ${categorySummary.updated}`,
+    ].join("\n"));
   }
-  console.log(`\nCatalog population complete\nDiscovered: ${discovered}\nUpserted:   ${saved}`);
+  console.log([
+    "\nTOTAL", `Requests: ${total.requests}`, `Discovered: ${total.discovered}`,
+    `Unique tracks: ${uniqueTrackIds.size}`, `Created: ${total.created}`, `Updated: ${total.updated}`,
+  ].join("\n"));
 }
 
 main()

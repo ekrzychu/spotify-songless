@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSpotifySession } from "@/lib/spotify/auth";
-import { SpotifyApiError, spotifyFetch } from "@/lib/spotify/api";
+import { spotifyFetch } from "@/lib/spotify/api";
+import { classifyPlaybackError, PLAYBACK_ERROR_RESPONSES } from "@/lib/spotify/playback-errors";
 
 const playbackSchema = z.object({
   deviceId: z.string().min(1).max(128),
@@ -22,10 +23,12 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     );
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    if (process.env.NODE_ENV === "development") console.error(error);
-    if (error instanceof SpotifyApiError && (error.status === 404 || error.status === 403)) {
-      return NextResponse.json({ error: "This track is unavailable in your market.", code: "track_unavailable" }, { status: 409 });
+    const code = classifyPlaybackError(error);
+    const response = PLAYBACK_ERROR_RESPONSES[code];
+    if (process.env.NODE_ENV === "development") {
+      const status = error && typeof error === "object" && "status" in error ? String(error.status) : "unknown";
+      console.error(`Spotify playback failed: status ${status}; classified ${code}`);
     }
-    return NextResponse.json({ error: "Playback could not start. Check your Spotify device." }, { status: 502 });
+    return NextResponse.json({ error: response.message, code }, { status: response.status });
   }
 }

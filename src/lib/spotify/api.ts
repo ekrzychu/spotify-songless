@@ -1,6 +1,11 @@
 export class SpotifyApiError extends Error {
-  constructor(public readonly status: number, message: string) {
-    super(message);
+  constructor(
+    public readonly status: number,
+    public readonly spotifyMessage: string | null,
+    public readonly reason: string | null,
+    public readonly retryAfterSeconds: number | null,
+  ) {
+    super(`Spotify request failed (${status})`);
     this.name = "SpotifyApiError";
   }
 }
@@ -9,25 +14,71 @@ async function wait(milliseconds: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+export type SpotifyRetryOptions = {
+  maxRetries?: number;
+  maxRetryAfterSeconds?: number;
+  sleep?: (milliseconds: number) => Promise<void>;
+};
+
 export async function spotifyFetch<T>(
   accessToken: string,
   path: string,
   init: RequestInit = {},
-  retried = false,
+  retryOptions: SpotifyRetryOptions = {},
+  attempt = 0,
 ): Promise<T> {
   const response = await fetch(path.startsWith("http") ? path : `https://api.spotify.com/v1${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", ...init.headers },
     cache: "no-store",
   });
-  if (response.status === 429 && !retried) {
-    const retrySeconds = Math.min(Number(response.headers.get("retry-after") ?? 1), 10);
-    await wait(retrySeconds * 1000);
-    return spotifyFetch<T>(accessToken, path, init, true);
+  const errorDetails = response.ok ? null : await readSpotifyError(response);
+  const maxRetries = retryOptions.maxRetries ?? 1;
+  if (response.status === 429 && attempt < maxRetries && errorDetails?.reason !== "QUOTA_EXCEEDED") {
+    const retrySeconds = Math.min(
+      errorDetails?.retryAfterSeconds ?? 1,
+      retryOptions.maxRetryAfterSeconds ?? 10,
+    );
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`Spotify rate limited: retrying after ${retrySeconds}s`);
+    }
+    await (retryOptions.sleep ?? wait)(retrySeconds * 1000);
+    return spotifyFetch<T>(accessToken, path, init, retryOptions, attempt + 1);
   }
-  if (!response.ok) throw new SpotifyApiError(response.status, `Spotify request failed (${response.status})`);
+  if (!response.ok) {
+    throw new SpotifyApiError(
+      response.status,
+      errorDetails?.message ?? null,
+      errorDetails?.reason ?? null,
+      errorDetails?.retryAfterSeconds ?? null,
+    );
+  }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+async function readSpotifyError(response: Response): Promise<{
+  message: string | null; reason: string | null; retryAfterSeconds: number | null;
+}> {
+  const payload: unknown = await response.json().catch(() => null);
+  const nested = payload && typeof payload === "object" ? (payload as { error?: unknown }).error : null;
+  const nestedObject = nested && typeof nested === "object" ? nested as { message?: unknown; reason?: unknown } : null;
+  const topLevel = payload && typeof payload === "object" ? payload as { message?: unknown; reason?: unknown } : null;
+  const message = typeof nestedObject?.message === "string"
+    ? nestedObject.message
+    : typeof nested === "string"
+      ? nested
+      : typeof topLevel?.message === "string" ? topLevel.message : null;
+  const reason = typeof nestedObject?.reason === "string"
+    ? nestedObject.reason
+    : typeof topLevel?.reason === "string" ? topLevel.reason : null;
+  const retryValue = response.headers.get("retry-after");
+  const retryHeader = retryValue === null ? Number.NaN : Number(retryValue);
+  return {
+    message: message?.slice(0, 300) ?? null,
+    reason: reason?.slice(0, 100).toUpperCase() ?? null,
+    retryAfterSeconds: Number.isFinite(retryHeader) && retryHeader >= 0 ? retryHeader : null,
+  };
 }
 
 export type SpotifyTrack = {

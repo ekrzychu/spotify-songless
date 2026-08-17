@@ -1,5 +1,5 @@
 {
-  "name": "needle-drop",
+  "name": "spodle",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:browser": "playwright test",
     "db:generate": "prisma generate",
     "db:push": "tsx --env-file=.env.local scripts/push-db.ts",
     "catalog:populate": "tsx --env-file=.env.local scripts/populate-catalog.ts",
@@ -29,6 +30,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",

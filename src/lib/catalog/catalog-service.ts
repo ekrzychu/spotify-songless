@@ -1,11 +1,12 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import type { SpotifyTrack } from "@/lib/spotify/api";
+import { normalizeIsrc } from "@/lib/streams/import-normalizer";
 
-export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string): Promise<void> {
+export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string): Promise<"created" | "updated"> {
   const data = {
     spotifyUri: track.uri,
-    isrc: track.external_ids?.isrc ?? null,
+    isrc: track.external_ids?.isrc ? normalizeIsrc(track.external_ids.isrc) : null,
     title: track.name,
     artistNames: track.artists.map((artist) => artist.name).join(", "),
     artistsJson: JSON.stringify(track.artists),
@@ -15,6 +16,7 @@ export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string
     spotifyUrl: track.external_urls.spotify,
   } satisfies Omit<Prisma.GameTrackUncheckedCreateInput, "spotifyTrackId">;
 
+  const existing = await db.gameTrack.findUnique({ where: { spotifyTrackId: track.id }, select: { id: true } });
   const saved = await db.gameTrack.upsert({
     where: { spotifyTrackId: track.id },
     create: { spotifyTrackId: track.id, ...data },
@@ -24,4 +26,5 @@ export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string
     where: { trackId_categoryId: { trackId: saved.id, categoryId } },
     create: { trackId: saved.id, categoryId }, update: {},
   });
+  return existing ? "updated" : "created";
 }

@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  findRounds: vi.fn(), count: vi.fn(), findTrack: vi.fn(),
+  findRounds: vi.fn(), findUnavailable: vi.fn(), count: vi.fn(), findTrack: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   db: {
     gameRound: { findMany: mocks.findRounds },
+    sessionUnavailableTrack: { findMany: mocks.findUnavailable },
     gameTrack: { count: mocks.count, findFirst: mocks.findTrack },
   },
 }));
@@ -17,6 +18,7 @@ describe("random track selection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findRounds.mockResolvedValue([{ trackId: "heard-track" }]);
+    mocks.findUnavailable.mockResolvedValue([]);
     mocks.count.mockResolvedValue(1);
     mocks.findTrack.mockResolvedValue({ id: "eligible" });
     vi.spyOn(Math, "random").mockReturnValue(0);
@@ -41,8 +43,22 @@ describe("random track selection", () => {
   });
 
   it("resets exclusions after catalog exhaustion without immediate repeat", async () => {
+    mocks.findRounds.mockResolvedValue([{ trackId: "heard-track" }, { trackId: "older-track" }]);
     mocks.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
     await getRandomTrack({ sessionId: "session", category: "all", difficulty: "normal" });
-    expect(mocks.count).toHaveBeenLastCalledWith({ where: expect.objectContaining({ id: { not: "heard-track" } }) });
+    expect(mocks.count).toHaveBeenLastCalledWith({ where: expect.objectContaining({ id: { notIn: ["heard-track"] } }) });
+  });
+
+  it("excludes an unavailable track only for the affected session", async () => {
+    mocks.findRounds.mockResolvedValue([]);
+    mocks.findUnavailable.mockImplementation(({ where }: { where: { sessionId: string } }) =>
+      Promise.resolve(where.sessionId === "session-a" ? [{ trackId: "market-blocked" }] : []));
+
+    await getRandomTrack({ sessionId: "session-a", category: "all", difficulty: "normal" });
+    expect(mocks.count.mock.calls[0]?.[0].where.id).toEqual({ notIn: ["market-blocked"] });
+
+    mocks.count.mockClear();
+    await getRandomTrack({ sessionId: "session-b", category: "all", difficulty: "normal" });
+    expect(mocks.count.mock.calls[0]?.[0].where.id).toBeUndefined();
   });
 });

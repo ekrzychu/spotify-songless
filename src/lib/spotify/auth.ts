@@ -2,6 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { baseCookie } from "@/lib/server/cookies";
 import { seal, unseal } from "@/lib/server/sealed-cookie";
+import {
+  consumeOAuthAttempt,
+  parseOAuthAttemptStore,
+  type OAuthAttempt,
+  type OAuthAttemptStore,
+} from "@/lib/spotify/oauth-state";
 
 export const SPOTIFY_SCOPES = [
   "streaming",
@@ -17,7 +23,18 @@ export type SpotifyTokenSession = {
   expiresAt: number;
 };
 
-type OAuthState = { state: string; verifier: string };
+export class OAuthStateError extends Error {
+  constructor(public readonly reason: "mismatch" | "expired") {
+    super(`Spotify authorization state ${reason}`);
+    this.name = "OAuthStateError";
+  }
+}
+
+const OAUTH_COOKIE_PREFIX = "nd_oauth_";
+
+export function oauthAttemptCookieName(state: string): string | null {
+  return /^[A-Za-z0-9_-]{20,128}$/.test(state) ? `${OAUTH_COOKIE_PREFIX}${state}` : null;
+}
 
 function required(name: "SPOTIFY_CLIENT_ID" | "SPOTIFY_REDIRECT_URI"): string {
   const value = process.env[name];
@@ -30,7 +47,12 @@ export async function createAuthorizationUrl(): Promise<string> {
   const state = randomBytes(24).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const store = await cookies();
-  store.set("nd_oauth", seal({ state, verifier } satisfies OAuthState), { ...baseCookie, maxAge: 600 });
+  pruneOAuthCookies(store.getAll().filter((cookie) => cookie.name.startsWith(OAUTH_COOKIE_PREFIX)), store);
+  const cookieName = oauthAttemptCookieName(state);
+  if (!cookieName) throw new Error("Generated OAuth state was invalid");
+  store.set(cookieName, seal({ state, verifier, expiresAt: Date.now() + 10 * 60_000 } satisfies OAuthAttempt), {
+    ...baseCookie, maxAge: 600,
+  });
   const query = new URLSearchParams({
     client_id: required("SPOTIFY_CLIENT_ID"), response_type: "code",
     redirect_uri: required("SPOTIFY_REDIRECT_URI"), scope: SPOTIFY_SCOPES,
@@ -59,13 +81,26 @@ async function tokenRequest(body: URLSearchParams): Promise<SpotifyTokenSession>
 
 export async function completeAuthorization(code: string, returnedState: string): Promise<void> {
   const store = await cookies();
-  const stateCookie = store.get("nd_oauth")?.value;
-  const oauth = stateCookie ? unseal<OAuthState>(stateCookie) : null;
-  store.delete("nd_oauth");
-  if (!oauth || oauth.state !== returnedState) throw new Error("Spotify authorization state did not match");
+  const cookieName = oauthAttemptCookieName(returnedState);
+  const stateCookie = cookieName ? store.get(cookieName)?.value : null;
+  if (cookieName) store.delete(cookieName);
+  let attempt = stateCookie ? validOAuthAttempt(unseal<OAuthAttempt>(stateCookie), returnedState) : null;
+
+  // A flow started before the per-attempt-cookie upgrade can still finish once.
+  if (!attempt) {
+    const legacyCookie = store.get("nd_oauth")?.value;
+    const attempts = parseOAuthAttemptStore(legacyCookie ? unseal<OAuthAttemptStore>(legacyCookie) : null);
+    const consumed = consumeOAuthAttempt(attempts, returnedState);
+    if (consumed.remaining.attempts.length) {
+      store.set("nd_oauth", seal(consumed.remaining), { ...baseCookie, maxAge: 600 });
+    } else if (legacyCookie) store.delete("nd_oauth");
+    attempt = consumed.attempt;
+    if (!attempt) throw new OAuthStateError(consumed.reason ?? "mismatch");
+  }
+  if (attempt.expiresAt <= Date.now()) throw new OAuthStateError("expired");
   const token = await tokenRequest(new URLSearchParams({
     client_id: required("SPOTIFY_CLIENT_ID"), grant_type: "authorization_code", code,
-    redirect_uri: required("SPOTIFY_REDIRECT_URI"), code_verifier: oauth.verifier,
+    redirect_uri: required("SPOTIFY_REDIRECT_URI"), code_verifier: attempt.verifier,
   }));
   store.set("nd_spotify", seal(token), { ...baseCookie, maxAge: 60 * 60 * 24 * 30 });
 }
@@ -91,4 +126,27 @@ export async function getSpotifySession(): Promise<SpotifyTokenSession | null> {
 
 export async function clearSpotifySession(): Promise<void> {
   (await cookies()).delete("nd_spotify");
+}
+
+function validOAuthAttempt(value: OAuthAttempt | null, state: string): OAuthAttempt | null {
+  return value
+    && value.state === state
+    && typeof value.verifier === "string"
+    && typeof value.expiresAt === "number"
+    ? value
+    : null;
+}
+
+function pruneOAuthCookies(
+  cookiesToCheck: { name: string; value: string }[],
+  store: Awaited<ReturnType<typeof cookies>>,
+): void {
+  const now = Date.now();
+  const valid = cookiesToCheck.map((cookie) => ({ cookie, attempt: unseal<OAuthAttempt>(cookie.value) }))
+    .filter((item) => item.attempt && item.attempt.expiresAt > now)
+    .sort((left, right) => left.attempt!.expiresAt - right.attempt!.expiresAt);
+  for (const item of cookiesToCheck) {
+    if (!valid.some((entry) => entry.cookie.name === item.name)) store.delete(item.name);
+  }
+  for (const item of valid.slice(0, Math.max(0, valid.length - 4))) store.delete(item.cookie.name);
 }

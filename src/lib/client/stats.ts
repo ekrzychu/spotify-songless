@@ -13,11 +13,9 @@ export const EMPTY_STATS: LocalStats = {
   recordedRounds: [],
 };
 
-const KEY = "needle-drop:stats";
-
 export function readStats(): LocalStats {
   try {
-    return { ...EMPTY_STATS, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<LocalStats> };
+    return { ...EMPTY_STATS, ...JSON.parse(migrateStorageKey("stats") ?? "{}") as Partial<LocalStats> };
   } catch {
     return EMPTY_STATS;
   }
@@ -38,10 +36,11 @@ export function recordResult(roundId: string, won: boolean, attempts: number): L
     guessDistribution: distribution,
     recordedRounds: [...stats.recordedRounds.slice(-199), roundId],
   };
-  localStorage.setItem(KEY, JSON.stringify(updated));
+  localStorage.setItem(STORAGE_KEYS.stats, JSON.stringify(updated));
   return updated;
 }
 
 export function winRate(stats: LocalStats): number {
   return stats.gamesPlayed ? Math.round((stats.gamesWon / stats.gamesPlayed) * 100) : 0;
 }
+import { migrateStorageKey, STORAGE_KEYS } from "@/lib/client/storage";

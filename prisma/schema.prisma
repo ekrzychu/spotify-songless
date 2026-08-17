@@ -25,9 +25,20 @@ model GameTrack {
   updatedAt      DateTime             @updatedAt
   categories     TrackCategory[]
   rounds         GameRound[]
+  unavailableIn  SessionUnavailableTrack[]
 
   @@index([difficulty, playable])
   @@index([isrc])
+}
+
+model SessionUnavailableTrack {
+  sessionId String
+  trackId   String
+  createdAt DateTime  @default(now())
+  track     GameTrack @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, trackId])
+  @@index([sessionId, createdAt])
 }
 
 model TrackCategory {

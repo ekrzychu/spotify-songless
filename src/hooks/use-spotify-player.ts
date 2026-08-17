@@ -4,6 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type PlayerStatus = "loading" | "ready" | "offline" | "error";
 
+export class PlaybackRequestError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+    this.name = "PlaybackRequestError";
+  }
+}
+
 export function useSpotifyPlayer(enabled: boolean) {
   const playerRef = useRef<SpotifyPlayer | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -33,7 +40,7 @@ export function useSpotifyPlayer(enabled: boolean) {
     const initialize = () => {
       if (disposed || !window.Spotify || playerRef.current) return;
       const player = new window.Spotify.Player({
-        name: "Needle Drop",
+        name: "spodle",
         volume: 0.65,
         enableMediaSession: false,
         getOAuthToken: (callback) => {
@@ -87,7 +94,7 @@ export function useSpotifyPlayer(enabled: boolean) {
     });
     if (!response.ok) {
       const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
-      throw new Error(payload?.code === "track_unavailable" ? "TRACK_UNAVAILABLE" : payload?.error ?? "Playback failed");
+      throw new PlaybackRequestError(payload?.code ?? "playback_failed", payload?.error ?? "Playback failed");
     }
     setPlaying(true);
     const durationMs = durationSeconds * 1000;

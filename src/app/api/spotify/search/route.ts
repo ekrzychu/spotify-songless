@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSpotifySession } from "@/lib/spotify/auth";
 import { spotifyFetch, type SpotifySearchResponse } from "@/lib/spotify/api";
+import { SPOTIFY_SEARCH_LIMIT } from "@/lib/catalog/spotify-pagination";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const query = request.nextUrl.searchParams.get("q")?.trim() ?? "";
@@ -9,7 +10,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSpotifySession();
   if (!session) return NextResponse.json({ error: "Reconnect Spotify" }, { status: 401 });
   try {
-    const params = new URLSearchParams({ q: query, type: "track", limit: "8", offset: String(offset) });
+    const params = new URLSearchParams({
+      q: query, type: "track", limit: String(Math.min(8, SPOTIFY_SEARCH_LIMIT)), offset: String(offset),
+    });
     const result = await spotifyFetch<SpotifySearchResponse>(session.accessToken, `/search?${params}`);
     return NextResponse.json({
       items: result.tracks.items.map((track) => ({
