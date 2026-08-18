@@ -21,6 +21,7 @@ describe("visible title and artist search matching", () => {
     ["emi", { title: "Lose Yourself", artistNames: ["Eminem"] }],
     ["bohem", { title: "Bohemian Rhapsody", artistNames: ["Queen"] }],
     ["ac dc", { title: "Back in Black", artistNames: ["AC/DC"] }],
+    ["came as", { title: "Come As You Are", artistNames: ["Nirvana"] }],
   ])("matches %j using only visible fields", (query, fields) => {
     expect(matchesVisibleTrack(query, fields)).toBe(true);
   });
@@ -41,6 +42,17 @@ describe("visible title and artist search matching", () => {
     expect(visibleTrackMatchRank("hello the", hello)).toBeNull();
   });
 
+  it("keeps one-edit token matches below exact and prefix matches", () => {
+    const tracks = [
+      { id: "fuzzy", title: "Come As You Are", artists: ["Nirvana"] },
+      { id: "exact", title: "Came As We Left", artists: ["Example"] },
+    ];
+    expect(rankAndDedupeVisibleTracks("came as", tracks, (track) => ({
+      title: track.title,
+      artistNames: track.artists,
+    })).map((track) => track.id)).toEqual(["exact", "fuzzy"]);
+  });
+
   it("ranks exact title before title prefix and cross-field token matches", () => {
     const tracks = [
       { id: "cross", title: "Hello", artists: ["Adele"] },
@@ -51,6 +63,18 @@ describe("visible title and artist search matching", () => {
       title: track.title,
       artistNames: track.artists,
     })).map((track) => track.id)).toEqual(["exact", "cross", "prefix"]);
+  });
+
+  it("ranks title prefix and substring matches before artist-only matches", () => {
+    const tracks = [
+      { id: "artist", title: "Another Song", artists: ["Halo"] },
+      { id: "substring", title: "My Halo Song", artists: ["Someone"] },
+      { id: "prefix", title: "Halo Again", artists: ["Someone"] },
+    ];
+    expect(rankAndDedupeVisibleTracks("halo", tracks, (track) => ({
+      title: track.title,
+      artistNames: track.artists,
+    })).map((track) => track.id)).toEqual(["prefix", "substring", "artist"]);
   });
 
   it("deduplicates normalized visible entries while preserving distinct versions", () => {

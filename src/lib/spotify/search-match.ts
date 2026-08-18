@@ -13,6 +13,32 @@ export function normalizeSearchText(value: string): string {
     .replace(/\s+/g, " ");
 }
 
+function isOneEditFromWordPrefix(token: string, word: string): boolean {
+  if (token.length < 4) return false;
+  const prefix = word.slice(0, token.length);
+  if (Math.abs(token.length - prefix.length) > 1) return false;
+
+  let tokenIndex = 0;
+  let prefixIndex = 0;
+  let edits = 0;
+  while (tokenIndex < token.length && prefixIndex < prefix.length) {
+    if (token[tokenIndex] === prefix[prefixIndex]) {
+      tokenIndex += 1;
+      prefixIndex += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (token.length > prefix.length) tokenIndex += 1;
+    else if (prefix.length > token.length) prefixIndex += 1;
+    else {
+      tokenIndex += 1;
+      prefixIndex += 1;
+    }
+  }
+  return edits + (token.length - tokenIndex) + (prefix.length - prefixIndex) <= 1;
+}
+
 export function visibleTrackMatchRank(query: string, fields: VisibleTrackFields): number | null {
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery) return null;
@@ -21,15 +47,19 @@ export function visibleTrackMatchRank(query: string, fields: VisibleTrackFields)
   const artists = fields.artistNames.map(normalizeSearchText).filter(Boolean);
   const visibleWords = [title, ...artists].flatMap((value) => value.split(" ").filter(Boolean));
   const queryTokens = normalizedQuery.split(" ");
-  if (!queryTokens.every((token) => visibleWords.some((word) => word.startsWith(token)))) return null;
+  const exactTokenMatch = queryTokens.every((token) => visibleWords.some((word) => word.startsWith(token)));
+  const fuzzyTokenMatch = queryTokens.every((token) => (
+    visibleWords.some((word) => word.startsWith(token) || isOneEditFromWordPrefix(token, word))
+  ));
+  if (!fuzzyTokenMatch) return null;
 
   if (title === normalizedQuery) return 0;
-  if (artists.some((artist) => artist === normalizedQuery)) return 1;
-  if (title.startsWith(normalizedQuery)) return 2;
-  if (artists.some((artist) => artist.startsWith(normalizedQuery))) return 3;
-  if (title.includes(normalizedQuery)) return 4;
+  if (title.startsWith(normalizedQuery)) return 1;
+  if (title.includes(normalizedQuery)) return 2;
+  if (artists.some((artist) => artist === normalizedQuery)) return 3;
+  if (artists.some((artist) => artist.startsWith(normalizedQuery))) return 4;
   if (artists.some((artist) => artist.includes(normalizedQuery))) return 5;
-  return 6;
+  return exactTokenMatch ? 6 : 7;
 }
 
 export function matchesVisibleTrack(query: string, fields: VisibleTrackFields): boolean {
