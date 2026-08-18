@@ -26,6 +26,11 @@ model GameTrack {
   streamCountUpdatedAt   DateTime?
   playable               Boolean                   @default(true)
   gameEligible           Boolean                   @default(true)
+  languageCode           String?
+  languageSource         String?
+  languageConfidence     Float?
+  languageEligible       Boolean                   @default(true)
+  languageUpdatedAt      DateTime?
   spotifyUrl             String
   createdAt              DateTime                  @default(now())
   updatedAt              DateTime                  @updatedAt

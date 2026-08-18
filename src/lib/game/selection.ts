@@ -1,5 +1,6 @@
 import type { GameTrack, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { ALLOWED_GAME_LANGUAGE_CODES } from "@/lib/catalog/track-language";
 import type { Difficulty } from "@/types/game";
 
 export type SelectionInput = {
@@ -27,6 +28,8 @@ export async function selectRandomTrack(input: SelectionInput): Promise<TrackSel
   const baseWhere: Prisma.GameTrackWhereInput = {
     playable: true,
     gameEligible: true,
+    languageEligible: true,
+    languageCode: { in: [...ALLOWED_GAME_LANGUAGE_CODES] },
     streamCount: { not: null },
     difficulty: input.difficulty,
     ...(input.category === "all" ? {} : {

@@ -33,6 +33,8 @@ describe("random track selection", () => {
     expect(mocks.count).toHaveBeenLastCalledWith({ where: {
       playable: true,
       gameEligible: true,
+      languageEligible: true,
+      languageCode: { in: ["en", "pl", "es"] },
       streamCount: { not: null },
       difficulty: "hard",
       categories: { some: { categoryId: "rock", gameEligible: true } },
@@ -46,6 +48,8 @@ describe("random track selection", () => {
     expect(mocks.count.mock.calls[0]?.[0].where).toMatchObject({
       playable: true,
       gameEligible: true,
+      languageEligible: true,
+      languageCode: { in: ["en", "pl", "es"] },
       streamCount: { not: null },
       difficulty: "impossible",
     });

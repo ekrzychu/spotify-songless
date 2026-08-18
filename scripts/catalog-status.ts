@@ -6,6 +6,7 @@ import {
   type CatalogPoolStatus,
 } from "../src/lib/catalog/catalog-status-report";
 import { DIFFICULTIES, type Difficulty } from "../src/types/game";
+import { ALLOWED_GAME_LANGUAGE_CODES } from "../src/lib/catalog/track-language";
 
 async function main(): Promise<void> {
   const categories = activeCatalogStatusCategories();
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
     gameplayRankedTracks,
     difficultyCounts,
     allMusicRanked,
+    languageRows,
     pools,
   ] = await Promise.all([
     db.gameTrack.count(),
@@ -28,6 +30,8 @@ async function main(): Promise<void> {
     db.gameTrack.count({ where: {
       playable: true,
       gameEligible: true,
+      languageEligible: true,
+      languageCode: { in: [...ALLOWED_GAME_LANGUAGE_CODES] },
       difficulty: { not: null },
       streamCount: { not: null },
     } }),
@@ -39,6 +43,14 @@ async function main(): Promise<void> {
       playable: true,
       difficulty: { not: null },
       streamCount: { not: null },
+    } }),
+    db.gameTrack.findMany({ select: {
+      languageCode: true,
+      languageEligible: true,
+      playable: true,
+      gameEligible: true,
+      streamCount: true,
+      difficulty: true,
     } }),
     Promise.all(categories.map(async (category): Promise<CatalogPoolStatus> => {
       const relation = { some: { categoryId: category.id } };
@@ -53,6 +65,8 @@ async function main(): Promise<void> {
         db.gameTrack.count({ where: {
           playable: true,
           gameEligible: true,
+          languageEligible: true,
+          languageCode: { in: [...ALLOWED_GAME_LANGUAGE_CODES] },
           difficulty: { not: null },
           streamCount: { not: null },
           categories: { some: { categoryId: category.id, gameEligible: true } },
@@ -62,6 +76,16 @@ async function main(): Promise<void> {
     })),
   ]);
   const difficulty = Object.fromEntries(difficultyCounts) as Record<Difficulty, number>;
+  const languageEligible = languageRows.filter((track) => (
+    track.languageEligible
+    && track.languageCode !== null
+    && ALLOWED_GAME_LANGUAGE_CODES.includes(track.languageCode as (typeof ALLOWED_GAME_LANGUAGE_CODES)[number])
+  ));
+  const languageByCode = languageRows.reduce<Record<string, number>>((counts, track) => {
+    const code = track.languageCode ?? "unknown";
+    counts[code] = (counts[code] ?? 0) + 1;
+    return counts;
+  }, {});
 
   console.log(formatCatalogStatus({
     totalTracks,
@@ -71,6 +95,15 @@ async function main(): Promise<void> {
     rankedTracks,
     gameplayRankedTracks,
     unrankedTracks: totalTracks - rankedTracks,
+    language: {
+      eligible: languageEligible.length,
+      ineligible: totalTracks - languageEligible.length,
+      unknown: languageRows.filter((track) => track.languageCode === null).length,
+      eligibleRanked: languageEligible.filter((track) => (
+        track.playable && track.gameEligible && track.streamCount !== null && track.difficulty !== null
+      )).length,
+      byCode: languageByCode,
+    },
     difficulty,
     allMusic: { total: playableTracks, ranked: allMusicRanked },
     pools,

@@ -4,8 +4,20 @@ import type { SpotifyTrack } from "@/lib/spotify/api";
 import { normalizeIsrc } from "@/lib/streams/import-normalizer";
 import { assignDerivedCategories } from "@/lib/catalog/derived-categories";
 import { deriveGameEligibility } from "@/lib/catalog/game-eligibility";
+import { deriveTrackLanguageState } from "@/lib/catalog/track-language";
 
 export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string): Promise<"created" | "updated"> {
+  const existing = await db.gameTrack.findUnique({
+    where: { spotifyTrackId: track.id },
+    select: { id: true, languageCode: true, languageSource: true },
+  });
+  const language = deriveTrackLanguageState({
+    spotifyTrackId: track.id,
+    title: track.name,
+    albumName: track.album.name,
+    existingLanguageCode: existing?.languageCode,
+    existingLanguageSource: existing?.languageSource,
+  });
   const data = {
     spotifyUri: track.uri,
     isrc: track.external_ids?.isrc ? normalizeIsrc(track.external_ids.isrc) : null,
@@ -16,10 +28,11 @@ export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string
     releaseDate: track.album.release_date ?? null,
     playable: track.is_playable !== false,
     gameEligible: deriveGameEligibility(track.name).gameEligible,
+    ...language,
+    languageUpdatedAt: new Date(),
     spotifyUrl: track.external_urls.spotify,
   } satisfies Omit<Prisma.GameTrackUncheckedCreateInput, "spotifyTrackId">;
 
-  const existing = await db.gameTrack.findUnique({ where: { spotifyTrackId: track.id }, select: { id: true } });
   const saved = await db.gameTrack.upsert({
     where: { spotifyTrackId: track.id },
     create: { spotifyTrackId: track.id, ...data },

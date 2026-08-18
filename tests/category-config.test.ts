@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CATEGORIES, CATEGORY_IDS } from "@/lib/catalog/category-config";
-import { ENRICHMENT_BALANCE_CATEGORY_IDS } from "@/lib/streams/enrichment-selection";
+import { ENRICHMENT_REPORT_CATEGORY_IDS } from "@/lib/streams/enrichment-selection";
 
 const REMOVED_CATEGORY_IDS = ["indie", "metal", "punk", "country", "jazz"];
 const ACTIVE_GENRE_IDS = ["pop", "rock", "hip-hop", "r-and-b", "electronic", "classical"];
@@ -20,7 +20,7 @@ describe("active category configuration", () => {
   });
 
   it("removes retired genres from Soundcharts balancing while retaining decades", () => {
-    expect(ENRICHMENT_BALANCE_CATEGORY_IDS).not.toEqual(expect.arrayContaining(REMOVED_CATEGORY_IDS));
-    expect(ENRICHMENT_BALANCE_CATEGORY_IDS).toEqual(expect.arrayContaining([...ACTIVE_GENRE_IDS, ...DECADE_IDS]));
+    expect(ENRICHMENT_REPORT_CATEGORY_IDS).not.toEqual(expect.arrayContaining(REMOVED_CATEGORY_IDS));
+    expect(ENRICHMENT_REPORT_CATEGORY_IDS).toEqual(expect.arrayContaining([...ACTIVE_GENRE_IDS, ...DECADE_IDS]));
   });
 });

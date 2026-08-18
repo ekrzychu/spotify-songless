@@ -82,7 +82,10 @@ function recordRecoverableError(summary: Summary, code: ReturnType<typeof errorC
 function printGroupHeader(index: number, total: number, group: PlannedEnrichmentGroup): void {
   console.log(`[${index}/${total}] ${group.representative.title} - ${group.representative.artistNames}`);
   console.log(`Eligible target tracks represented: ${group.targetTrackIds.length}`);
-  console.log(`Adaptive need score: ${group.needScore}`);
+  console.log(
+    `Language: ${group.representative.languageCode ?? "unknown"}`
+    + ` (${group.representative.languageSource ?? "unknown"})`,
+  );
 }
 
 function printSummary(summary: Summary, client: SoundchartsClient): void {
@@ -129,12 +132,16 @@ async function main(): Promise<void> {
       isrc: true,
       title: true,
       artistNames: true,
+      albumName: true,
       streamCount: true,
       streamCountSource: true,
       soundchartsUuid: true,
       difficulty: true,
       playable: true,
       gameEligible: true,
+      languageCode: true,
+      languageSource: true,
+      languageEligible: true,
       categories: { select: { categoryId: true, gameEligible: true } },
     },
   });
@@ -164,12 +171,13 @@ async function main(): Promise<void> {
   console.log([
     "SOUNDCHARTS ENRICHMENT",
     `Mode: ${options.canary ? "CANARY" : options.refresh ? "refresh Soundcharts-owned values and fill missing" : "fill missing only"}`,
-    `Target per gameplay cell: ${options.targetPerCell}`,
+    `Target per gameplay cell (reporting only): ${options.targetPerCell}`,
     `Include cached unranked: ${options.includeCachedUnranked ? "yes" : "no"}`,
     `Include obvious non-song-like groups: ${options.includeNonSonglike ? "yes" : "no"}`,
     `Quota reserve: ${reserve}`,
     `Customer API request budget: ${options.maxApiRequests}`,
     `Selected recording groups: ${groups.length}`,
+    "Selection order is neutral: represented targets, normalized ISRC, then stable key.",
     "Candidate difficulty is unknown until Soundcharts returns verified stream counts.",
   ].join("\n"));
 

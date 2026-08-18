@@ -118,7 +118,7 @@ Available controls are:
 
 `--max-per-shard` can be increased on a later run without resetting progress. Use `--reset-checkpoint` only when intentionally changing checkpoint identity such as the market or year range. Plan mode reads only the local database and checkpoint; it does not request a Spotify access token or call Spotify Search.
 
-`npm run catalog:status` is also local-only. It reports total/playable, game-eligible/game-ineligible, gameplay-ranked, and raw ranked/unranked counts plus active genre and decade pool coverage. Historical removed-category relations are not included in active pool reporting.
+`npm run catalog:status` is also local-only. It reports total/playable, game-eligible/game-ineligible, gameplay-ranked, and raw ranked/unranked counts plus active genre and decade pool coverage and a separate language-eligibility section. Historical removed-category relations are not included in active pool reporting.
 
 `npm run catalog:audit-genres` is a read-only SQLite audit. It contacts neither Spotify nor Soundcharts, requests no OAuth token, and never modifies category relations. The report shows active-genre overlap counts, samples of classical crossover associations, and a conservative title-based track-quality audit. Overlaps are evidence for review, not automatic declarations that a relation is incorrect. Historical relations do not contain Spotify search-shard provenance, so the audit does not invent it.
 
@@ -142,6 +142,14 @@ npm run catalog:backfill-game-eligibility
 
 This deterministic backfill reads and updates SQLite only. It reports scanned, eligible, excluded, updated, and per-reason counts. It changes only `gameEligible`; existing stream counts, difficulty, Soundcharts provenance, and category relations are preserved.
 
+Normal gameplay and Soundcharts enrichment also require a separate language classification. The only allowed codes are `en`, `pl`, and `es`. Apply the additive schema with `npm run db:push`, then classify existing tracks locally with:
+
+```powershell
+npm run catalog:backfill-languages
+```
+
+Language precedence is a Spotify-ID manual override in `rules/language_overrides.json`, a trustworthy explicit provider value when one is available, the local `tinyld` detector, then unknown. Spotify currently supplies no trusted lyric-language field to this ingestion path. Detection uses the title and album title after removing common version markers. It requires at least 12 letters, three tokens, detector confidence 0.65, and a 0.20 lead over the next result. Short or uncertain metadata remains unknown and ineligible. This heuristic describes metadata language; it is not verified lyric language. Audit classifications without writes or network access with `npm run catalog:audit-languages`.
+
 ## Verify Soundcharts access
 
 To test Soundcharts resolution and Spotify audience access against 10 deterministic, unranked catalog tracks, run:
@@ -156,15 +164,15 @@ HTTP request totals are not treated as quota consumption. Quota remaining is rep
 
 ## Enrich stream counts from Soundcharts
 
-Plan a deficit-aware batch before making any external requests:
+Plan a neutral deterministic batch before making any external requests:
 
 ```powershell
 npm run streams:plan:soundcharts -- --limit=100
 ```
 
-The planner reads SQLite only: it requests no OAuth token, makes no Spotify or Soundcharts requests, and performs no database writes. It prints raw ranked counts separately from the category-by-difficulty gameplay matrix, which requires a stream count, valid difficulty, Spotify playability, and persistent game eligibility. Normal enrichment targets use the same playability and game-eligibility gates. It also prints thin cells, selected recording groups, and a customer HTTP request estimate. Candidate difficulty remains unknown until verified Soundcharts stream counts are returned.
+The planner reads SQLite only: it requests no OAuth token, makes no Spotify or Soundcharts requests, and performs no database writes. It prints raw ranked counts separately from the category-by-difficulty gameplay matrix. Coverage and thin cells are reporting only. Normal enrichment targets require Spotify playability, persistent track eligibility, and an allowed, eligible `en`, `pl`, or `es` language state. Candidate difficulty remains unknown until verified Soundcharts stream counts are returned.
 
-The default planning target is 10 ranked tracks per active category/difficulty cell. Use `--target-per-cell=N`, `--limit=N`, or `--verbose` to adjust the report. Previously resolved groups that still have no audience value are reported but excluded by default; include them deliberately with `--include-cached-unranked`.
+The default reporting target is 10 ranked tracks per active category/difficulty cell. `--target-per-cell=N` changes reporting only and never candidate selection. Use `--limit=N` or `--verbose` to adjust output. Previously resolved groups that still have no audience value are reported but excluded by default; include them deliberately with `--include-cached-unranked`.
 
 Obvious non-song-like recording groups are also excluded from planning and enrichment by default. The conservative rules cover explicit skit, interview/entrevista, commentary, spoken-word, dialogue, and voice-memo/note markers after case, punctuation, diacritic, and whitespace normalization. Generic musical terms such as intro, outro, instrumental, mix, remix, live, demo, edit, remaster, and version are not excluded. `The Interview` remains an explicit eligible exact title; other interview markers at a title boundary are excluded as a documented conservative tradeoff. Use `--include-non-songlike` for deliberate debugging or manual review; the default exclusion is recommended for normal enrichment.
 
@@ -180,7 +188,7 @@ Canary mode selects exactly one recording group, disables refresh, and permits a
 npm run streams:enrich:soundcharts -- --limit=10 --max-api-requests=30
 ```
 
-Execution uses the same deterministic deficit-aware selector as the planner. Active genre and decade deficits drive selection, with at most the two largest gameplay-enabled genre deficits plus the single largest gameplay-enabled decade deficit contributing to each recording group's score. This preserves multi-genre utility without allowing multiple release-decade relations to inflate one song. Re-run the planner after each batch because newly verified difficulty values change the coverage matrix.
+Execution uses the exact same neutral deterministic selector as the planner. After eligibility filtering, groups are ordered by the number of eligible local targets represented, valid normalized ISRC availability, then the stable hash/key comparison. Genre, decade, difficulty-cell deficit, and `target-per-cell` values do not affect selection or order.
 
 The default execution limit is 100 groups, the maximum is 400, and the default hard customer API request budget is 300. Every customer attempt, including a 429 retry, consumes that execution budget; the OAuth request does not. The client does not call `/api/v2/team/usage` automatically. `SOUNDCHARTS_QUOTA_RESERVE` is enforced only after a valid quota header has been observed, while the hard request budget protects runs whose quota remains unknown.
 
@@ -196,7 +204,7 @@ Resolved songs without audience data retain a null stream count and difficulty. 
 
 Fresh song resolution also retains optional Soundcharts `releaseDate` and normalized root/subgenre metadata from that same resolver response, so capturing it costs no additional request. Metadata is propagated to every local Spotify version in the recording group. A group using an already-cached UUID does not perform another resolution merely to fill missing metadata, so older enriched rows may legitimately remain null.
 
-Raw `TrackCategory` rows preserve Spotify discovery associations. Each row has separate gameplay trust fields; normal category rounds, planner coverage, and candidate scoring require the relation to be gameplay-enabled. Fresh Soundcharts genre metadata validates only existing active genre relations through a small explicit alias table. Supported relations are enabled, unsupported relations are disabled only when at least one active Soundcharts genre maps successfully, and unmapped evidence leaves trust unchanged. Validation never creates or deletes genre rows and never validates decades. Apply the same rules to stored metadata locally with:
+Raw `TrackCategory` rows preserve Spotify discovery associations. Each row has separate gameplay trust fields; normal category rounds and planner coverage reporting require the relation to be gameplay-enabled. Fresh Soundcharts genre metadata validates only existing active genre relations through a small explicit alias table. Supported relations are enabled, unsupported relations are disabled only when at least one active Soundcharts genre maps successfully, and unmapped evidence leaves trust unchanged. Validation never creates or deletes genre rows and never validates decades. Apply the same rules to stored metadata locally with:
 
 ```powershell
 npm run catalog:backfill-game-categories

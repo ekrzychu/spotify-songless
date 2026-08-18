@@ -19,6 +19,13 @@ export type CatalogStatusData = {
   rankedTracks: number;
   gameplayRankedTracks: number;
   unrankedTracks: number;
+  language: {
+    eligible: number;
+    ineligible: number;
+    unknown: number;
+    eligibleRanked: number;
+    byCode: Record<string, number>;
+  };
   difficulty: Record<Difficulty, number>;
   allMusic: { total: number; ranked: number };
   pools: CatalogPoolStatus[];
@@ -39,6 +46,9 @@ export function activeCatalogStatusCategories(): Array<{
 export function formatCatalogStatus(data: CatalogStatusData): string {
   const genres = data.pools.filter((pool) => pool.type === "genre");
   const decades = data.pools.filter((pool) => pool.type === "decade");
+  const otherLanguages = Object.entries(data.language.byCode)
+    .filter(([code]) => !["en", "pl", "es", "unknown"].includes(code))
+    .reduce((total, [, count]) => total + count, 0);
   return [
     "CATALOG STATUS",
     "",
@@ -49,6 +59,16 @@ export function formatCatalogStatus(data: CatalogStatusData): string {
     `Ranked tracks (raw): ${data.rankedTracks}`,
     `Game-eligible ranked tracks (playable): ${data.gameplayRankedTracks}`,
     `Unranked tracks: ${data.unrankedTracks}`,
+    "",
+    "LANGUAGE ELIGIBILITY",
+    `Eligible EN/PL/ES: ${data.language.eligible}`,
+    `Ineligible: ${data.language.ineligible}`,
+    `Unknown/uncertain: ${data.language.unknown}`,
+    `Eligible ranked and playable: ${data.language.eligibleRanked}`,
+    `English (en): ${data.language.byCode.en ?? 0}`,
+    `Polish (pl): ${data.language.byCode.pl ?? 0}`,
+    `Spanish (es): ${data.language.byCode.es ?? 0}`,
+    `Other: ${otherLanguages}`,
     "",
     "DIFFICULTY",
     ...DIFFICULTIES.map((difficulty) => `${DIFFICULTY_LABELS[difficulty]}: ${data.difficulty[difficulty]}`),

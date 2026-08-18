@@ -7,7 +7,6 @@ import {
   groupEnrichmentCandidates,
   parseSoundchartsExecutionOptions,
   parseSoundchartsPlanningOptions,
-  scoreEnrichmentCategoryNeeds,
   type EnrichmentTrackCandidate,
   type SoundchartsSelectionOptions,
 } from "@/lib/streams/enrichment-selection";
@@ -25,12 +24,16 @@ function track(
     isrc: null,
     title: `Track ${id}`,
     artistNames: `Artist ${id}`,
+    albumName: `Album ${id}`,
     streamCount: null,
     streamCountSource: null,
     soundchartsUuid: null,
     difficulty: null,
     playable: true,
     gameEligible: true,
+    languageCode: "en",
+    languageSource: "detector",
+    languageEligible: true,
     categories: categories.map((categoryId) => ({ categoryId, gameEligible: true })),
     ...overrides,
   };
@@ -105,9 +108,33 @@ describe("Soundcharts recording groups", () => {
     expect(groups[0]?.tracks.map((candidate) => candidate.id)).toEqual(["eligible"]);
     expect(groups[0]?.categoryIds).toEqual(["pop"]);
   });
+
+  it("targets only the allowed-language local version in a mixed ISRC group", () => {
+    const groups = groupEnrichmentCandidates([
+      track("english", "pop", { isrc: "USABC1234567" }),
+      track("german", "rock", {
+        isrc: "USABC1234567", languageCode: "de", languageEligible: false,
+      }),
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.targetTrackIds).toEqual(["english"]);
+    expect(groups[0]?.tracks.map((candidate) => candidate.id)).toEqual(["english"]);
+  });
+
+  it("excludes unknown, disallowed, and inconsistent language state", () => {
+    const groups = groupEnrichmentCandidates([
+      track("allowed", "pop"),
+      track("unknown", "rock", { languageCode: null, languageEligible: false }),
+      track("disallowed", "rock", { languageCode: "de", languageEligible: false }),
+      track("bad-flag", "rock", { languageCode: "en", languageEligible: false }),
+      track("bad-code", "rock", { languageCode: "de", languageEligible: true }),
+    ]);
+    expect(groups.map((group) => group.representative.id)).toEqual(["allowed"]);
+  });
 });
 
-describe("adaptive Soundcharts planning", () => {
+describe("neutral Soundcharts planning", () => {
   it("builds the active genre and decade difficulty matrix from ranked tracks", () => {
     const coverage = buildRankedCoverageMatrix([
       ranked("pop-easy", ["pop", "80s"], "easy"),
@@ -180,33 +207,45 @@ describe("adaptive Soundcharts planning", () => {
     expect(coverage.categories["90s"]?.hard).toBe(1);
   });
 
-  it("prioritizes candidates serving thinner genre and decade cells", () => {
-    const fullCategories = DIFFICULTIES.map((difficulty) => (
-      ranked(`full-${difficulty}`, ["pop", "2010s"], difficulty)
-    ));
-    const candidateA = track("candidate-a", ["pop", "2010s"]);
-    const candidateB = track("candidate-b", ["hip-hop", "80s"]);
-    const plan = buildSoundchartsEnrichmentPlan([...fullCategories, candidateA, candidateB], {
-      ...options,
-      targetPerCell: 1,
-    });
+  it("keeps identical candidate order when category coverage and targets change radically", () => {
+    const candidates = [
+      track("candidate-a", ["pop", "2010s"]),
+      track("candidate-b", ["hip-hop", "80s"]),
+      track("candidate-c", ["rock", "90s"]),
+    ];
+    const popCoverage = DIFFICULTIES.map((difficulty) => ranked(`pop-${difficulty}`, ["pop", "2010s"], difficulty));
+    const hipCoverage = DIFFICULTIES.map((difficulty) => ranked(`hip-${difficulty}`, ["hip-hop", "80s"], difficulty));
+    const first = buildSoundchartsEnrichmentPlan([...popCoverage, ...candidates], { ...options, targetPerCell: 1 });
+    const second = buildSoundchartsEnrichmentPlan([...hipCoverage, ...candidates], { ...options, targetPerCell: 999 });
 
-    expect(plan.selectedGroups[0]?.representative.id).toBe("candidate-b");
-    expect(plan.selectedGroups[0]?.needScore).toBeGreaterThan(plan.selectedGroups[1]?.needScore ?? 0);
+    expect(first.selectedGroups.map((group) => group.representative.id))
+      .toEqual(second.selectedGroups.map((group) => group.representative.id));
   });
 
-  it("scores at most two genre needs plus one highest decade need", () => {
-    const needs = new Map([
-      ["pop", 5],
-      ["hip-hop", 8],
-      ["rock", 4],
-      ["80s", 7],
-      ["90s", 6],
-    ]);
+  it("does not let targetPerCell 1, 10, or 100 change selection order", () => {
+    const candidates = [
+      track("candidate-a", ["pop", "2010s"]),
+      track("candidate-b", ["hip-hop", "80s"], { isrc: "USAAA1234567" }),
+      track("candidate-c", ["rock", "90s"]),
+    ];
+    const orders = [1, 10, 100].map((targetPerCell) => buildSoundchartsEnrichmentPlan(
+      candidates, { ...options, targetPerCell },
+    ).selectedGroups.map((group) => group.key));
+    expect(orders[1]).toEqual(orders[0]);
+    expect(orders[2]).toEqual(orders[0]);
+  });
 
-    expect(scoreEnrichmentCategoryNeeds(["pop", "80s", "90s"], needs)).toBe(12);
-    expect(scoreEnrichmentCategoryNeeds(["hip-hop", "80s"], needs)).toBe(15);
-    expect(scoreEnrichmentCategoryNeeds(["pop", "hip-hop", "rock", "80s", "90s"], needs)).toBe(20);
+  it("orders neutrally by represented target count, normalized ISRC, then stable key", () => {
+    const plan = buildSoundchartsEnrichmentPlan([
+      track("group-a", "pop", { isrc: "USAAA1234567" }),
+      track("group-b", "rock", { isrc: "USAAA1234567" }),
+      track("single-isrc", "pop", { isrc: "USBBB1234567" }),
+      track("single-spotify", "pop"),
+    ], options);
+
+    expect(plan.selectedGroups[0]?.targetTrackIds).toHaveLength(2);
+    expect(plan.selectedGroups[1]?.normalizedIsrc).not.toBeNull();
+    expect(plan.selectedGroups[2]?.normalizedIsrc).toBeNull();
   });
 
   it("does not score a rejected candidate category relation", () => {

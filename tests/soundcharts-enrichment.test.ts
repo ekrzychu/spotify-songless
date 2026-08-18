@@ -16,12 +16,16 @@ const representative: EnrichmentTrackCandidate = {
   isrc: "USABC1234567",
   title: "Test",
   artistNames: "Artist",
+  albumName: "Album",
   streamCount: null,
   streamCountSource: null,
   soundchartsUuid: null,
   difficulty: null,
   playable: true,
   gameEligible: true,
+  languageCode: "en",
+  languageSource: "detector",
+  languageEligible: true,
   categories: [{ categoryId: "pop", gameEligible: true }],
 };
 
@@ -65,7 +69,12 @@ describe("Soundcharts database enrichment", () => {
 
     expect(result).toMatchObject({ status: "updated", localTracksUpdated: 2, difficulty: "easy" });
     expect(database.gameTrack.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["track-1", "track-2"] }, streamCount: null },
+      where: {
+        id: { in: ["track-1", "track-2"] },
+        languageEligible: true,
+        languageCode: { in: ["en", "pl", "es"] },
+        streamCount: null,
+      },
       data: {
         soundchartsUuid: "soundcharts-uuid",
         soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
@@ -99,7 +108,12 @@ describe("Soundcharts database enrichment", () => {
 
     expect(result).toMatchObject({ status: "audience_unavailable", difficulty: null });
     expect(database.gameTrack.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ["track-1"] }, streamCount: null },
+      where: {
+        id: { in: ["track-1"] },
+        languageEligible: true,
+        languageCode: { in: ["en", "pl", "es"] },
+        streamCount: null,
+      },
       data: {
         soundchartsUuid: "soundcharts-uuid",
         soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
@@ -126,6 +140,8 @@ describe("Soundcharts database enrichment", () => {
 
     expect(database.gameTrack.updateMany.mock.calls[0]?.[0].where).toEqual({
       id: { in: ["track-1"] },
+      languageEligible: true,
+      languageCode: { in: ["en", "pl", "es"] },
       OR: [{ streamCount: null }, { streamCountSource: "soundcharts" }],
     });
     expect(database.trackCategory.findMany).not.toHaveBeenCalled();

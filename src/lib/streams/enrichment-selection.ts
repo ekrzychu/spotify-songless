@@ -1,4 +1,5 @@
 import { CATEGORIES } from "@/lib/catalog/category-config";
+import { isAllowedGameLanguage } from "@/lib/catalog/track-language";
 import {
   classifyTrackQuality,
   TRACK_QUALITY_REASONS,
@@ -21,7 +22,7 @@ export const ACTIVE_ENRICHMENT_CATEGORIES = CATEGORIES
   ))
   .map(({ id, label, type }) => ({ id, label, type }));
 
-export const ENRICHMENT_BALANCE_CATEGORY_IDS = ACTIVE_ENRICHMENT_CATEGORIES.map((category) => category.id);
+export const ENRICHMENT_REPORT_CATEGORY_IDS = ACTIVE_ENRICHMENT_CATEGORIES.map((category) => category.id);
 
 export type EnrichmentTrackCandidate = {
   id: string;
@@ -29,12 +30,16 @@ export type EnrichmentTrackCandidate = {
   isrc: string | null;
   title: string;
   artistNames: string;
+  albumName: string;
   streamCount: bigint | null;
   streamCountSource: string | null;
   soundchartsUuid: string | null;
   difficulty: string | null;
   playable: boolean;
   gameEligible: boolean;
+  languageCode: string | null;
+  languageSource: string | null;
+  languageEligible: boolean;
   categories: ReadonlyArray<{ categoryId: string; gameEligible: boolean }>;
 };
 
@@ -67,7 +72,6 @@ export type UnderfilledCell = {
 
 export type PlannedEnrichmentGroup = EnrichmentRecordingGroup & {
   activeCategoryIds: string[];
-  needScore: number;
   difficulty: "unknown";
   estimatedCustomerRequests: { minimum: number; likely: number; upper: number };
 };
@@ -142,7 +146,7 @@ function recordingKey(track: EnrichmentTrackCandidate): { key: string; normalize
 }
 
 function isTarget(track: EnrichmentTrackCandidate, refresh: boolean): boolean {
-  if (!track.playable || !track.gameEligible) return false;
+  if (!track.playable || !track.gameEligible || !isNormalLanguageEligible(track)) return false;
   if (track.streamCount === null) return true;
   return refresh && track.streamCountSource === "soundcharts";
 }
@@ -152,7 +156,11 @@ function isRawRanked(track: EnrichmentTrackCandidate): boolean {
 }
 
 function isGameplayRanked(track: EnrichmentTrackCandidate): boolean {
-  return track.playable && track.gameEligible && isRawRanked(track);
+  return track.playable && track.gameEligible && isNormalLanguageEligible(track) && isRawRanked(track);
+}
+
+function isNormalLanguageEligible(track: EnrichmentTrackCandidate): boolean {
+  return track.languageEligible && isAllowedGameLanguage(track.languageCode);
 }
 
 export function groupEnrichmentCandidates(
@@ -161,7 +169,7 @@ export function groupEnrichmentCandidates(
 ): EnrichmentRecordingGroup[] {
   const grouped = new Map<string, { normalizedIsrc: string | null; tracks: EnrichmentTrackCandidate[] }>();
   for (const track of tracks) {
-    if (!track.playable || !track.gameEligible) continue;
+    if (!track.playable || !track.gameEligible || !isNormalLanguageEligible(track)) continue;
     const { key, normalizedIsrc } = recordingKey(track);
     const current = grouped.get(key) ?? { normalizedIsrc, tracks: [] };
     current.tracks.push(track);
@@ -203,7 +211,7 @@ export function buildRankedCoverageMatrix(
   const categories = Object.fromEntries(
     ACTIVE_ENRICHMENT_CATEGORIES.map((category) => [category.id, emptyDifficultyCoverage()]),
   );
-  const activeIds = new Set(ENRICHMENT_BALANCE_CATEGORY_IDS);
+  const activeIds = new Set(ENRICHMENT_REPORT_CATEGORY_IDS);
 
   for (const track of tracks) {
     if (!isGameplayRanked(track)) continue;
@@ -224,10 +232,6 @@ export function buildSoundchartsEnrichmentPlan(
 ): SoundchartsEnrichmentPlan {
   const coverage = buildRankedCoverageMatrix(tracks);
   const underfilledCells = buildUnderfilledCells(coverage, options.targetPerCell);
-  const categoryNeed = new Map<string, number>();
-  for (const cell of underfilledCells) {
-    categoryNeed.set(cell.categoryId, (categoryNeed.get(cell.categoryId) ?? 0) + cell.deficit);
-  }
 
   const groups = groupEnrichmentCandidates(tracks, options.refresh);
   const targetById = new Map(tracks.map((track) => [track.id, track]));
@@ -264,19 +268,17 @@ export function buildSoundchartsEnrichmentPlan(
 
   const selectedGroups = eligible
     .map((group): PlannedEnrichmentGroup => {
-      const activeCategoryIds = ENRICHMENT_BALANCE_CATEGORY_IDS.filter((id) => group.categoryIds.includes(id));
+      const activeCategoryIds = ENRICHMENT_REPORT_CATEGORY_IDS.filter((id) => group.categoryIds.includes(id));
       return {
         ...group,
         activeCategoryIds,
-        needScore: scoreEnrichmentCategoryNeeds(activeCategoryIds, categoryNeed),
         difficulty: "unknown",
         estimatedCustomerRequests: estimateGroupRequests(group),
       };
     })
     .sort((left, right) => (
-      right.needScore - left.needScore
+      right.targetTrackIds.length - left.targetTrackIds.length
       || Number(Boolean(right.normalizedIsrc)) - Number(Boolean(left.normalizedIsrc))
-      || right.targetTrackIds.length - left.targetTrackIds.length
       || compareStable(left, right)
     ))
     .slice(0, options.limit);
@@ -354,7 +356,7 @@ export function formatSoundchartsEnrichmentPlan(
     `Selected groups: ${plan.selectedGroups.length}`,
     `Local Spotify tracks represented: ${plan.localTracksRepresented}`,
     "",
-    "CURRENT RANKED GAMEPLAY COVERAGE",
+    "CURRENT RANKED GAMEPLAY COVERAGE (REPORTING ONLY)",
     "",
     "ALL MUSIC",
     formatCoverageTable([{ label: "All Music", coverage: plan.coverage.allMusic }]),
@@ -371,7 +373,7 @@ export function formatSoundchartsEnrichmentPlan(
       coverage: plan.coverage.categories[category.id]!,
     }))),
     "",
-    "MOST UNDERFILLED CELLS",
+    "MOST UNDERFILLED CELLS (REPORTING ONLY; DOES NOT AFFECT SELECTION)",
     ...plan.underfilledCells.slice(0, 20).map((cell, index) => (
       `${index + 1}. ${cell.categoryLabel} x ${DIFFICULTY_LABELS[cell.difficulty]}: ${cell.ranked} / ${cell.target}`
     )),
@@ -385,7 +387,8 @@ export function formatSoundchartsEnrichmentPlan(
     `TOP ${displayedGroups.length} SELECTED CANDIDATES`,
     ...displayedGroups.map((group, index) => (
       `${index + 1}. ${group.representative.title} - ${group.representative.artistNames}`
-      + ` | need=${group.needScore}`
+      + ` | language=${group.representative.languageCode ?? "unknown"}`
+      + ` (${group.representative.languageSource ?? "unknown"})`
       + ` | difficulty=${group.difficulty}`
       + ` | target tracks=${group.targetTrackIds.length}`
       + ` | categories=${group.activeCategoryIds.join(", ") || "All Music only"}`
@@ -401,25 +404,8 @@ export function formatSoundchartsEnrichmentPlan(
     `Upper customer API HTTP requests: ${plan.requestEstimate.upper}`,
     "HTTP request estimate, NOT guaranteed quota consumption. Retries are not included.",
     "",
-    "Scoring sums at most the two largest enabled genre deficits plus the single largest enabled decade deficit per recording group.",
+    "Category coverage and target-per-cell are reporting diagnostics only; selection uses neutral recording-group ordering.",
   ].join("\n");
-}
-
-export function scoreEnrichmentCategoryNeeds(
-  categoryIds: readonly string[],
-  categoryNeed: ReadonlyMap<string, number>,
-): number {
-  const categoryType = new Map(ACTIVE_ENRICHMENT_CATEGORIES.map((category) => [category.id, category.type]));
-  const genreContribution = categoryIds
-    .filter((categoryId) => categoryType.get(categoryId) === "genre")
-    .map((categoryId) => categoryNeed.get(categoryId) ?? 0)
-    .sort((left, right) => right - left)
-    .slice(0, 2)
-    .reduce((total, need) => total + need, 0);
-  const decadeContribution = Math.max(0, ...categoryIds
-    .filter((categoryId) => categoryType.get(categoryId) === "decade")
-    .map((categoryId) => categoryNeed.get(categoryId) ?? 0));
-  return genreContribution + decadeContribution;
 }
 
 export function parseSoundchartsPlanningOptions(args: readonly string[]): SoundchartsPlanningOptions {

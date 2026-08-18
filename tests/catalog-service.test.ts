@@ -69,4 +69,29 @@ describe("catalog metadata upsert preservation", () => {
       update: { gameEligible: false },
     });
   });
+
+  it("updates offline language classification while preserving a manual decision", async () => {
+    const englishTrack = {
+      ...track,
+      name: "Dancing through the night with all my friends",
+      album: { ...track.album, name: "Songs about love and summer" },
+    };
+    await upsertCatalogTrack(englishTrack, "pop");
+    expect(mocks.upsertTrack.mock.calls[0]?.[0].update).toMatchObject({
+      languageCode: "en",
+      languageSource: "detector",
+      languageEligible: true,
+      languageUpdatedAt: expect.any(Date),
+    });
+
+    mocks.findUnique.mockResolvedValue({
+      id: "database-track", languageCode: "pl", languageSource: "manual",
+    });
+    await upsertCatalogTrack(englishTrack, "pop");
+    expect(mocks.upsertTrack.mock.calls[1]?.[0].update).toMatchObject({
+      languageCode: "pl",
+      languageSource: "manual",
+      languageEligible: true,
+    });
+  });
 });
