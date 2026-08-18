@@ -13,7 +13,10 @@ export type CatalogPoolStatus = {
 export type CatalogStatusData = {
   totalTracks: number;
   playableTracks: number;
+  gameEligibleTracks: number;
+  gameIneligibleTracks: number;
   rankedTracks: number;
+  gameplayRankedTracks: number;
   unrankedTracks: number;
   difficulty: Record<Difficulty, number>;
   allMusic: { total: number; ranked: number };
@@ -40,7 +43,10 @@ export function formatCatalogStatus(data: CatalogStatusData): string {
     "",
     `Total tracks: ${data.totalTracks}`,
     `Playable tracks: ${data.playableTracks}`,
-    `Ranked tracks: ${data.rankedTracks}`,
+    `Game-eligible tracks: ${data.gameEligibleTracks}`,
+    `Game-ineligible tracks: ${data.gameIneligibleTracks}`,
+    `Ranked tracks (raw): ${data.rankedTracks}`,
+    `Game-eligible ranked tracks (playable): ${data.gameplayRankedTracks}`,
     `Unranked tracks: ${data.unrankedTracks}`,
     "",
     "DIFFICULTY",

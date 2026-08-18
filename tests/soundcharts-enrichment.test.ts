@@ -19,6 +19,8 @@ const representative: EnrichmentTrackCandidate = {
   streamCountSource: null,
   soundchartsUuid: null,
   difficulty: null,
+  playable: true,
+  gameEligible: true,
   categories: [{ categoryId: "pop" }],
 };
 

@@ -33,6 +33,8 @@ export type EnrichmentTrackCandidate = {
   streamCountSource: string | null;
   soundchartsUuid: string | null;
   difficulty: string | null;
+  playable: boolean;
+  gameEligible: boolean;
   categories: ReadonlyArray<{ categoryId: string }>;
 };
 
@@ -87,7 +89,10 @@ export type SoundchartsExecutionOptions = SoundchartsSelectionOptions & {
 
 export type SoundchartsEnrichmentPlan = {
   catalogTracks: number;
-  rankedTracks: number;
+  rawRankedTracks: number;
+  gameplayRankedTracks: number;
+  gameIneligibleRankedTracks: number;
+  unplayableRankedTracks: number;
   unrankedTracks: number;
   targetPerCell: number;
   coverage: RankedCoverageMatrix;
@@ -137,8 +142,17 @@ function recordingKey(track: EnrichmentTrackCandidate): { key: string; normalize
 }
 
 function isTarget(track: EnrichmentTrackCandidate, refresh: boolean): boolean {
+  if (!track.playable || !track.gameEligible) return false;
   if (track.streamCount === null) return true;
   return refresh && track.streamCountSource === "soundcharts";
+}
+
+function isRawRanked(track: EnrichmentTrackCandidate): boolean {
+  return track.streamCount !== null && asDifficulty(track.difficulty) !== null;
+}
+
+function isGameplayRanked(track: EnrichmentTrackCandidate): boolean {
+  return track.playable && track.gameEligible && isRawRanked(track);
 }
 
 export function groupEnrichmentCandidates(
@@ -147,6 +161,7 @@ export function groupEnrichmentCandidates(
 ): EnrichmentRecordingGroup[] {
   const grouped = new Map<string, { normalizedIsrc: string | null; tracks: EnrichmentTrackCandidate[] }>();
   for (const track of tracks) {
+    if (!track.playable || !track.gameEligible) continue;
     const { key, normalizedIsrc } = recordingKey(track);
     const current = grouped.get(key) ?? { normalizedIsrc, tracks: [] };
     current.tracks.push(track);
@@ -189,8 +204,8 @@ export function buildRankedCoverageMatrix(
   const activeIds = new Set(ENRICHMENT_BALANCE_CATEGORY_IDS);
 
   for (const track of tracks) {
-    const difficulty = asDifficulty(track.difficulty);
-    if (!difficulty) continue;
+    if (!isGameplayRanked(track)) continue;
+    const difficulty = asDifficulty(track.difficulty)!;
     allMusic[difficulty] += 1;
     for (const categoryId of new Set(track.categories.map((category) => category.categoryId))) {
       if (activeIds.has(categoryId)) categories[categoryId]![difficulty] += 1;
@@ -261,7 +276,7 @@ export function buildSoundchartsEnrichmentPlan(
     .sort((left, right) => (
       right.needScore - left.needScore
       || Number(Boolean(right.normalizedIsrc)) - Number(Boolean(left.normalizedIsrc))
-      || right.tracks.length - left.tracks.length
+      || right.targetTrackIds.length - left.targetTrackIds.length
       || compareStable(left, right)
     ))
     .slice(0, options.limit);
@@ -277,12 +292,16 @@ export function buildSoundchartsEnrichmentPlan(
     likely: total.likely + group.estimatedCustomerRequests.likely,
     upper: total.upper + group.estimatedCustomerRequests.upper,
   }), { minimum: 0, likely: 0, upper: 0 });
-  const rankedTracks = tracks.filter((track) => asDifficulty(track.difficulty) !== null).length;
+  const rawRankedTracks = tracks.filter(isRawRanked).length;
+  const gameplayRankedTracks = tracks.filter(isGameplayRanked).length;
 
   return {
     catalogTracks: tracks.length,
-    rankedTracks,
-    unrankedTracks: tracks.length - rankedTracks,
+    rawRankedTracks,
+    gameplayRankedTracks,
+    gameIneligibleRankedTracks: tracks.filter((track) => isRawRanked(track) && !track.gameEligible).length,
+    unplayableRankedTracks: tracks.filter((track) => isRawRanked(track) && !track.playable).length,
+    unrankedTracks: tracks.length - rawRankedTracks,
     targetPerCell: options.targetPerCell,
     coverage,
     underfilledCells,
@@ -293,7 +312,7 @@ export function buildSoundchartsEnrichmentPlan(
     excludedNonSonglikeByReason,
     eligibleGroups: eligible.length,
     selectedGroups,
-    localTracksRepresented: selectedGroups.reduce((total, group) => total + group.tracks.length, 0),
+    localTracksRepresented: selectedGroups.reduce((total, group) => total + group.targetTrackIds.length, 0),
     selectedCategoryCoverage,
     requestEstimate,
   };
@@ -317,7 +336,10 @@ export function formatSoundchartsEnrichmentPlan(
     "SOUNDCHARTS ENRICHMENT PLAN",
     "",
     `Catalog tracks: ${plan.catalogTracks.toLocaleString("en-US")}`,
-    `Ranked tracks: ${plan.rankedTracks.toLocaleString("en-US")}`,
+    `Ranked tracks (raw): ${plan.rawRankedTracks.toLocaleString("en-US")}`,
+    `Game-eligible ranked tracks (playable): ${plan.gameplayRankedTracks.toLocaleString("en-US")}`,
+    `Game-ineligible ranked tracks: ${plan.gameIneligibleRankedTracks.toLocaleString("en-US")}`,
+    `Unplayable ranked tracks: ${plan.unplayableRankedTracks.toLocaleString("en-US")}`,
     `Unranked tracks: ${plan.unrankedTracks.toLocaleString("en-US")}`,
     "",
     `Target ranked per category/difficulty cell: ${plan.targetPerCell}`,
@@ -365,7 +387,7 @@ export function formatSoundchartsEnrichmentPlan(
       `${index + 1}. ${group.representative.title} - ${group.representative.artistNames}`
       + ` | need=${group.needScore}`
       + ` | difficulty=${group.difficulty}`
-      + ` | tracks=${group.tracks.length}`
+      + ` | target tracks=${group.targetTrackIds.length}`
       + ` | categories=${group.activeCategoryIds.join(", ") || "All Music only"}`
     )),
     ...(displayedGroups.length === 0 ? ["No eligible recording groups selected."] : []),

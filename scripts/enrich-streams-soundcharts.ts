@@ -81,7 +81,7 @@ function recordRecoverableError(summary: Summary, code: ReturnType<typeof errorC
 
 function printGroupHeader(index: number, total: number, group: PlannedEnrichmentGroup): void {
   console.log(`[${index}/${total}] ${group.representative.title} - ${group.representative.artistNames}`);
-  console.log(`Local tracks represented: ${group.tracks.length}`);
+  console.log(`Eligible target tracks represented: ${group.targetTrackIds.length}`);
   console.log(`Adaptive need score: ${group.needScore}`);
 }
 
@@ -133,6 +133,8 @@ async function main(): Promise<void> {
       streamCountSource: true,
       soundchartsUuid: true,
       difficulty: true,
+      playable: true,
+      gameEligible: true,
       categories: { select: { categoryId: true } },
     },
   });

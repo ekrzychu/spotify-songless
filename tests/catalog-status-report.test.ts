@@ -19,7 +19,10 @@ describe("catalog status report", () => {
     const data: CatalogStatusData = {
       totalTracks: 100,
       playableTracks: 90,
+      gameEligibleTracks: 88,
+      gameIneligibleTracks: 12,
       rankedTracks: 40,
+      gameplayRankedTracks: 35,
       unrankedTracks: 60,
       difficulty: { easy: 10, normal: 10, hard: 10, extreme: 5, impossible: 5 },
       allMusic: { total: 90, ranked: 35 },
@@ -30,6 +33,10 @@ describe("catalog status report", () => {
     expect(report).toContain("All Music");
     expect(report).toContain("Electronic / Dance");
     expect(report).toContain("2020s");
+    expect(report).toContain("Game-eligible tracks: 88");
+    expect(report).toContain("Game-ineligible tracks: 12");
+    expect(report).toContain("Ranked tracks (raw): 40");
+    expect(report).toContain("Game-eligible ranked tracks (playable): 35");
     expect(report).not.toMatch(/Indie|Metal|Punk|Country|Jazz/);
   });
 });

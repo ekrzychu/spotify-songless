@@ -28,6 +28,8 @@ function track(
     streamCountSource: null,
     soundchartsUuid: null,
     difficulty: null,
+    playable: true,
+    gameEligible: true,
     categories: categories.map((categoryId) => ({ categoryId })),
     ...overrides,
   };
@@ -41,11 +43,17 @@ const options: SoundchartsSelectionOptions = {
   refresh: false,
 };
 
-function ranked(id: string, categoryIds: string[], difficulty: Difficulty): EnrichmentTrackCandidate {
+function ranked(
+  id: string,
+  categoryIds: string[],
+  difficulty: Difficulty,
+  overrides: Partial<EnrichmentTrackCandidate> = {},
+): EnrichmentTrackCandidate {
   return track(id, categoryIds, {
     streamCount: 1n,
     streamCountSource: "soundcharts",
     difficulty,
+    ...overrides,
   });
 }
 
@@ -74,6 +82,28 @@ describe("Soundcharts recording groups", () => {
       "soundcharts",
     ]);
   });
+
+  it("excludes game-ineligible and unplayable targets from normal enrichment", () => {
+    const groups = groupEnrichmentCandidates([
+      track("eligible", "pop"),
+      track("ineligible", "rock", { gameEligible: false }),
+      track("unplayable", "classical", { playable: false }),
+    ]);
+
+    expect(groups.map((group) => group.representative.id)).toEqual(["eligible"]);
+  });
+
+  it("targets only the eligible local version in a mixed ISRC group", () => {
+    const groups = groupEnrichmentCandidates([
+      track("eligible", "pop", { isrc: "USABC1234567" }),
+      track("ineligible", "rock", { isrc: "USABC1234567", gameEligible: false }),
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.targetTrackIds).toEqual(["eligible"]);
+    expect(groups[0]?.tracks.map((candidate) => candidate.id)).toEqual(["eligible"]);
+    expect(groups[0]?.categoryIds).toEqual(["pop"]);
+  });
 });
 
 describe("adaptive Soundcharts planning", () => {
@@ -81,6 +111,12 @@ describe("adaptive Soundcharts planning", () => {
     const coverage = buildRankedCoverageMatrix([
       ranked("pop-easy", ["pop", "80s"], "easy"),
       ranked("hip-hard", ["hip-hop", "90s", "jazz"], "hard"),
+      ranked("vinheta", ["r-and-b", "2000s"], "impossible", {
+        title: "Vinheta 1 (SKIT)",
+        playable: true,
+        gameEligible: false,
+      }),
+      ranked("unplayable", ["rock", "70s"], "normal", { playable: false }),
       track("unranked", ["pop", "2010s"]),
     ]);
 
@@ -93,7 +129,40 @@ describe("adaptive Soundcharts planning", () => {
     expect(coverage.categories["80s"]?.easy).toBe(1);
     expect(coverage.categories["hip-hop"]?.hard).toBe(1);
     expect(coverage.categories["90s"]?.hard).toBe(1);
+    expect(coverage.allMusic.impossible).toBe(0);
+    expect(coverage.allMusic.normal).toBe(0);
+    expect(coverage.categories["r-and-b"]?.impossible).toBe(0);
+    expect(coverage.categories.rock?.normal).toBe(0);
     expect(coverage.categories).not.toHaveProperty("jazz");
+  });
+
+  it("distinguishes raw ranking from actual gameplay-ranked coverage", () => {
+    const plan = buildSoundchartsEnrichmentPlan([
+      ranked("eligible", ["pop"], "easy"),
+      ranked("vinheta", ["r-and-b"], "impossible", {
+        title: "Vinheta 1 (SKIT)",
+        playable: true,
+        gameEligible: false,
+      }),
+      ranked("unplayable", ["rock"], "hard", { playable: false }),
+      track("unranked", ["classical"]),
+    ], options);
+
+    expect(plan).toMatchObject({
+      catalogTracks: 4,
+      rawRankedTracks: 3,
+      gameplayRankedTracks: 1,
+      gameIneligibleRankedTracks: 1,
+      unplayableRankedTracks: 1,
+      unrankedTracks: 1,
+    });
+    expect(plan.coverage.allMusic).toEqual({
+      easy: 1,
+      normal: 0,
+      hard: 0,
+      extreme: 0,
+      impossible: 0,
+    });
   });
 
   it("prioritizes candidates serving thinner genre and decade cells", () => {
@@ -172,6 +241,25 @@ describe("adaptive Soundcharts planning", () => {
     expect(planningOverride.selectedGroups.map((group) => group.key))
       .toEqual(executionOverride.selectedGroups.map((group) => group.key));
     expect(planningOverride.selectedGroups.some((group) => group.representative.id === "skit")).toBe(true);
+  });
+
+  it("does not let the non-song override bypass persistent game eligibility", () => {
+    const candidates = [
+      track("music", ["pop", "80s"], { title: "Boys Don't Cry" }),
+      track("vinheta", ["r-and-b", "90s"], {
+        title: "Vinheta 1 (SKIT)",
+        playable: true,
+        gameEligible: false,
+      }),
+    ];
+    const defaultPlan = buildSoundchartsEnrichmentPlan(candidates, options);
+    const qualityOverridePlan = buildSoundchartsEnrichmentPlan(candidates, {
+      ...options,
+      includeNonSonglike: true,
+    });
+
+    expect(defaultPlan.selectedGroups.map((group) => group.representative.id)).toEqual(["music"]);
+    expect(qualityOverridePlan.selectedGroups.map((group) => group.representative.id)).toEqual(["music"]);
   });
 
   it("allows large zero-network plans while validating planning controls", () => {

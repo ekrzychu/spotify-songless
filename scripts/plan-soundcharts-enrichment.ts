@@ -21,6 +21,8 @@ async function main(): Promise<void> {
         streamCountSource: true,
         soundchartsUuid: true,
         difficulty: true,
+        playable: true,
+        gameEligible: true,
         categories: { select: { categoryId: true } },
       },
     }),
