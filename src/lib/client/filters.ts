@@ -1,7 +1,7 @@
 import { CATEGORY_IDS } from "@/lib/catalog/category-config";
-import { DIFFICULTIES, type Difficulty } from "@/types/game";
+import { GAME_DIFFICULTIES, type GameDifficulty } from "@/types/game";
 
-export type GameFilters = { category: string; difficulty: Difficulty };
+export type GameFilters = { category: string; difficulty: GameDifficulty };
 
 export const DEFAULT_FILTERS: GameFilters = { category: "all", difficulty: "normal" };
 
@@ -12,8 +12,8 @@ export function normalizeStoredFilters(value: unknown): GameFilters {
     ? candidate.category
     : DEFAULT_FILTERS.category;
   const difficulty = typeof candidate.difficulty === "string"
-    && DIFFICULTIES.includes(candidate.difficulty as Difficulty)
-    ? candidate.difficulty as Difficulty
+    && GAME_DIFFICULTIES.includes(candidate.difficulty as GameDifficulty)
+    ? candidate.difficulty as GameDifficulty
     : DEFAULT_FILTERS.difficulty;
   return { category, difficulty };
 }

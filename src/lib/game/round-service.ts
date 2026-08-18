@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { isCorrectGuess } from "@/lib/game/correctness";
 import { MAX_ATTEMPTS, applyAttempt, snippetLengthForAttempt } from "@/lib/game/snippets";
 import { selectRandomTrack } from "@/lib/game/selection";
-import type { Difficulty, RoundView, SearchTrack } from "@/types/game";
+import type { GameDifficulty, RoundView, SearchTrack } from "@/types/game";
 
 type LoadedRound = GameRound & { track: GameTrack; attempts: RoundAttempt[] };
 
@@ -13,11 +13,11 @@ export class RoundFinishedError extends Error {}
 export class NoTracksError extends Error {}
 export class PoolExhaustedError extends Error {}
 
-function reveal(track: GameTrack, difficulty: Difficulty) {
+function reveal(track: GameTrack, difficulty: GameDifficulty) {
   return {
     title: track.title, artistNames: track.artistNames, albumName: track.albumName,
     releaseDate: track.releaseDate, spotifyUrl: track.spotifyUrl,
-    streamCount: track.streamCount?.toString() ?? null, difficulty,
+    streamCount: difficulty === "unranked" ? null : track.streamCount?.toString() ?? null, difficulty,
   };
 }
 
@@ -36,11 +36,11 @@ export function roundView(round: LoadedRound): RoundView {
         ? "Skipped"
         : `${attempt.guessTitle ?? "Unknown track"} — ${attempt.guessArtists ?? "Unknown artist"}`,
     })),
-    ...(round.finished ? { answer: reveal(round.track, round.difficulty as Difficulty) } : {}),
+    ...(round.finished ? { answer: reveal(round.track, round.difficulty as GameDifficulty) } : {}),
   };
 }
 
-export async function createRound(sessionId: string, category: string, difficulty: Difficulty): Promise<RoundView> {
+export async function createRound(sessionId: string, category: string, difficulty: GameDifficulty): Promise<RoundView> {
   const selection = await selectRandomTrack({ sessionId, category, difficulty });
   if (selection.status === "empty") throw new NoTracksError();
   if (selection.status === "exhausted") throw new PoolExhaustedError();
@@ -115,7 +115,7 @@ export async function replaceUnavailableRound(roundId: string, sessionId: string
     }),
     db.gameRound.update({ where: { id: round.id }, data: { finished: true, finishedAt: new Date() } }),
   ]);
-  return createRound(sessionId, round.categoryId, round.difficulty as Difficulty);
+  return createRound(sessionId, round.categoryId, round.difficulty as GameDifficulty);
 }
 
 export { MAX_ATTEMPTS };

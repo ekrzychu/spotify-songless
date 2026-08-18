@@ -3,6 +3,7 @@
 import { useRef } from "react";
 import type { AnswerView } from "@/types/game";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
+import { GAME_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 
 export function ResultPanel({ won, attempts, answer, onNext }: {
   won: boolean; attempts: number; answer: AnswerView; onNext: () => void;
@@ -34,7 +35,8 @@ export function ResultPanel({ won, attempts, answer, onNext }: {
         </p>
         <dl className="result-meta">
           <div><dt>Attempts</dt><dd>{attempts} / 6</dd></div>
-          <div><dt>Streams</dt><dd>{answer.streamCount ? Number(answer.streamCount).toLocaleString() : "Unranked"}</dd></div>
+          <div><dt>Difficulty</dt><dd>{GAME_DIFFICULTY_LABELS[answer.difficulty]}</dd></div>
+          <div><dt>Streams</dt><dd>{answer.difficulty === "unranked" || answer.streamCount === null ? "Not ranked yet" : Number(answer.streamCount).toLocaleString()}</dd></div>
         </dl>
         <a className="spotify-link" href={answer.spotifyUrl} target="_blank" rel="noreferrer">Open in Spotify <span aria-hidden="true">↗</span></a>
         <button ref={nextRef} className="next-button" type="button" onClick={onNext}>Next Song</button>

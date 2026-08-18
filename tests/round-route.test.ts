@@ -13,11 +13,11 @@ vi.mock("@/lib/db", () => ({ db: { gameTrack: { count: vi.fn() } } }));
 import { NoTracksError, PoolExhaustedError } from "@/lib/game/round-service";
 import { POST } from "@/app/api/game/round/route";
 
-function request(): NextRequest {
+function request(difficulty = "normal"): NextRequest {
   return new NextRequest("http://127.0.0.1:3000/api/game/round", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ category: "all", difficulty: "normal" }),
+    body: JSON.stringify({ category: "all", difficulty }),
   });
 }
 
@@ -36,5 +36,12 @@ describe("new-round API pool states", () => {
     const response = await POST(request());
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.not.toHaveProperty("code", "pool_exhausted");
+  });
+
+  it("passes Unranked through as its own persisted gameplay history scope", async () => {
+    mocks.createRound.mockResolvedValue({ id: "unranked-round" });
+    const response = await POST(request("unranked"));
+    expect(response.status).toBe(200);
+    expect(mocks.createRound).toHaveBeenCalledWith("session", "all", "unranked");
   });
 });

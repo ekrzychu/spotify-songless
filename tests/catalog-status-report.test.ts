@@ -24,6 +24,7 @@ describe("catalog status report", () => {
       rankedTracks: 40,
       gameplayRankedTracks: 35,
       unrankedTracks: 60,
+      gameplayUnrankedTracks: 52,
       language: {
         accepted: 90,
         classifiedAllowed: 70,
@@ -44,7 +45,10 @@ describe("catalog status report", () => {
     expect(report).toContain("Game-eligible tracks: 88");
     expect(report).toContain("Game-ineligible tracks: 12");
     expect(report).toContain("Ranked tracks (raw): 40");
+    expect(report).toContain("RANKING STATUS");
     expect(report).toContain("Game-eligible ranked tracks (playable): 35");
+    expect(report).toContain("Unranked tracks (raw): 60");
+    expect(report).toContain("Game-eligible Unranked tracks (playable): 52");
     expect(report).toContain("GAMEPLAY-ENABLED RANKED CATEGORY COVERAGE");
     expect(report).toContain("LANGUAGE POLICY");
     expect(report).toContain("Accepted tracks: 90");

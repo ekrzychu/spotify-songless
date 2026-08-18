@@ -47,6 +47,13 @@ describe("spodle localStorage migration", () => {
     });
   });
 
+  it("restores the gameplay-only Unranked filter", () => {
+    expect(normalizeStoredFilters({ category: "pop", difficulty: "unranked" })).toEqual({
+      category: "pop",
+      difficulty: "unranked",
+    });
+  });
+
   it.each([
     [0, 0],
     [65, 65],

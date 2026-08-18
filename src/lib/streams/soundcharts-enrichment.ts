@@ -7,7 +7,7 @@ import {
 import { difficultyFromStreams } from "@/lib/game/difficulty";
 import type { EnrichmentRecordingGroup } from "@/lib/streams/enrichment-selection";
 import type { SoundchartsStreamCountResult } from "@/lib/streams/soundcharts-provider";
-import type { Difficulty } from "@/types/game";
+import type { RankedDifficulty } from "@/types/game";
 
 export interface SoundchartsEnrichmentProvider {
   getStreamCountResult(input: {
@@ -20,7 +20,7 @@ export interface SoundchartsEnrichmentProvider {
 export type SoundchartsEnrichmentResult = {
   status: "updated" | "audience_unavailable";
   localTracksUpdated: number;
-  difficulty: Difficulty | null;
+  difficulty: RankedDifficulty | null;
   providerResult: SoundchartsStreamCountResult;
 };
 

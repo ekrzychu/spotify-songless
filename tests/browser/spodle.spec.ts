@@ -24,6 +24,15 @@ const finishedRound: RoundView = {
   },
 };
 
+const unrankedFinishedRound: RoundView = {
+  ...finishedRound,
+  answer: {
+    ...finishedRound.answer!,
+    streamCount: null,
+    difficulty: "unranked",
+  },
+};
+
 async function mockSpotifySdk(page: Page): Promise<void> {
   await page.route("https://sdk.scdn.co/spotify-player.js", (route) => route.fulfill({
     contentType: "application/javascript",
@@ -144,7 +153,7 @@ test("the real session overrides a stale auth callback and the query is cleaned"
 });
 
 test("category and exposed difficulty controls are dark and keyboard accessible", async ({ page }) => {
-  await mockConnectedGame(page);
+  const state = await mockConnectedGame(page);
   await page.goto("/");
   await expect(page.getByText("Attempt 1")).toBeVisible();
 
@@ -169,9 +178,11 @@ test("category and exposed difficulty controls are dark and keyboard accessible"
   await expect(category).toBeFocused();
 
   await expect(page.getByRole("button", { name: "Normal", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "Hard", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Unranked", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Unranked", exact: true }).click();
   await page.getByRole("button", { name: "Start new song" }).click();
-  await expect(page.getByRole("button", { name: "Hard", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Unranked", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => state.roundBodies().at(-1)?.difficulty).toBe("unranked");
   await expect(listbox).toBeHidden();
 });
 
@@ -399,6 +410,16 @@ test("result dialog owns focus and Next Song starts another round", async ({ pag
   await page.getByRole("button", { name: "Next Song" }).click();
   await expect(result).toBeHidden();
   expect(state.roundRequests()).toBeGreaterThanOrEqual(2);
+});
+
+test("an Unranked result labels missing stream data without displaying zero", async ({ page }) => {
+  await mockConnectedGame(page, unrankedFinishedRound);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Skip" }).click();
+  const result = page.getByRole("dialog", { name: "Test Song" });
+  await expect(result).toContainText("DifficultyUnranked");
+  await expect(result).toContainText("StreamsNot ranked yet");
+  await expect(result.locator(".result-meta")).not.toContainText("0");
 });
 
 for (const width of [320, 390, 768, 1024, 1440, 1920]) {

@@ -12,7 +12,22 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { selectRandomTrack } from "@/lib/game/selection";
+import { gameplaySelectionWhere, selectRandomTrack } from "@/lib/game/selection";
+
+type SelectionFixture = {
+  playable: boolean;
+  gameEligible: boolean;
+  languageEligible: boolean;
+  streamCount: bigint | null;
+  difficulty: string | null;
+};
+
+function matchesSelection(track: SelectionFixture, difficulty: "hard" | "unranked"): boolean {
+  if (!track.playable || !track.gameEligible || !track.languageEligible) return false;
+  return difficulty === "unranked"
+    ? track.streamCount === null || track.difficulty === null
+    : track.streamCount !== null && track.difficulty === difficulty;
+}
 
 describe("random track selection", () => {
   beforeEach(() => {
@@ -51,6 +66,66 @@ describe("random track selection", () => {
       streamCount: { not: null },
       difficulty: "impossible",
     });
+  });
+
+  it("selects Unranked from either missing ranking field without consulting Soundcharts state", async () => {
+    await selectRandomTrack({ sessionId: "session", category: "all", difficulty: "unranked" });
+    expect(mocks.findRounds).toHaveBeenCalledWith({
+      where: { sessionId: "session", categoryId: "all", difficulty: "unranked" },
+      select: { trackId: true },
+    });
+    const where = mocks.count.mock.calls[0]?.[0].where as Record<string, unknown>;
+    expect(where).toMatchObject({
+      playable: true,
+      gameEligible: true,
+      languageEligible: true,
+      OR: [{ streamCount: null }, { difficulty: null }],
+    });
+    expect(where).not.toHaveProperty("soundchartsNotFoundAt");
+    expect(where).not.toHaveProperty("soundchartsUuid");
+  });
+
+  it("keeps category trust enforcement in Unranked category pools", () => {
+    expect(gameplaySelectionWhere("pop", "unranked")).toMatchObject({
+      categories: { some: { categoryId: "pop", gameEligible: true } },
+    });
+    expect(gameplaySelectionWhere("all", "unranked")).not.toHaveProperty("categories");
+  });
+
+  it.each(["playable", "gameEligible", "languageEligible"] as const)(
+    "excludes Unranked tracks when %s is false",
+    (flag) => {
+      const track: SelectionFixture = {
+        playable: true, gameEligible: true, languageEligible: true,
+        streamCount: null, difficulty: null,
+      };
+      track[flag] = false;
+      expect(matchesSelection(track, "unranked")).toBe(false);
+    },
+  );
+
+  it("excludes fully ranked tracks from Unranked across every ranked difficulty", () => {
+    for (const difficulty of ["easy", "normal", "hard", "extreme", "impossible"]) {
+      expect(matchesSelection({
+        playable: true, gameEligible: true, languageEligible: true,
+        streamCount: 1n, difficulty,
+      }, "unranked")).toBe(false);
+    }
+  });
+
+  it("moves a track from Unranked to its ranked pool as ranking fields are populated", () => {
+    const track: SelectionFixture = {
+      playable: true, gameEligible: true, languageEligible: true,
+      streamCount: null, difficulty: null,
+    };
+    expect(matchesSelection(track, "unranked")).toBe(true);
+    expect(matchesSelection(track, "hard")).toBe(false);
+
+    track.streamCount = 75_000_000n;
+    track.difficulty = "hard";
+
+    expect(matchesSelection(track, "unranked")).toBe(false);
+    expect(matchesSelection(track, "hard")).toBe(true);
   });
 
   it("accepts a ranked unknown-language track without requiring languageCode", async () => {
@@ -107,6 +182,18 @@ describe("random track selection", () => {
     await expect(selectRandomTrack({ sessionId: "session", category: "pop", difficulty: "normal" }))
       .resolves.toEqual({ status: "exhausted" });
     await expect(selectRandomTrack({ sessionId: "session", category: "rock", difficulty: "normal" }))
+      .resolves.toEqual({ status: "selected", track: { id: "eligible" } });
+  });
+
+  it("keeps played history and exhaustion independent for Unranked", async () => {
+    mocks.findRounds.mockImplementation(({ where }: { where: { difficulty: string } }) =>
+      Promise.resolve(where.difficulty === "unranked" ? [{ trackId: "eligible" }] : []));
+    mocks.count.mockImplementation(({ where }: { where: { id?: { notIn?: string[] } } }) =>
+      Promise.resolve(where.id?.notIn?.includes("eligible") ? 0 : 1));
+
+    await expect(selectRandomTrack({ sessionId: "session", category: "all", difficulty: "unranked" }))
+      .resolves.toEqual({ status: "exhausted" });
+    await expect(selectRandomTrack({ sessionId: "session", category: "all", difficulty: "hard" }))
       .resolves.toEqual({ status: "selected", track: { id: "eligible" } });
   });
 

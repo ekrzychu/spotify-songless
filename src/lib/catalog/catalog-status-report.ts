@@ -1,6 +1,6 @@
 import { CATEGORIES } from "@/lib/catalog/category-config";
-import { DIFFICULTY_LABELS } from "@/lib/game/difficulty";
-import { DIFFICULTIES, type Difficulty } from "@/types/game";
+import { RANKED_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
+import { RANKED_DIFFICULTIES, type RankedDifficulty } from "@/types/game";
 
 export type CatalogPoolStatus = {
   id: string;
@@ -19,6 +19,7 @@ export type CatalogStatusData = {
   rankedTracks: number;
   gameplayRankedTracks: number;
   unrankedTracks: number;
+  gameplayUnrankedTracks: number;
   language: {
     accepted: number;
     classifiedAllowed: number;
@@ -27,7 +28,7 @@ export type CatalogStatusData = {
     acceptedRanked: number;
     byCode: Record<string, number>;
   };
-  difficulty: Record<Difficulty, number>;
+  difficulty: Record<RankedDifficulty, number>;
   allMusic: { total: number; ranked: number };
   pools: CatalogPoolStatus[];
 };
@@ -57,9 +58,12 @@ export function formatCatalogStatus(data: CatalogStatusData): string {
     `Playable tracks: ${data.playableTracks}`,
     `Game-eligible tracks: ${data.gameEligibleTracks}`,
     `Game-ineligible tracks: ${data.gameIneligibleTracks}`,
+    "",
+    "RANKING STATUS",
     `Ranked tracks (raw): ${data.rankedTracks}`,
     `Game-eligible ranked tracks (playable): ${data.gameplayRankedTracks}`,
-    `Unranked tracks: ${data.unrankedTracks}`,
+    `Unranked tracks (raw): ${data.unrankedTracks}`,
+    `Game-eligible Unranked tracks (playable): ${data.gameplayUnrankedTracks}`,
     "",
     "LANGUAGE POLICY",
     `Accepted tracks: ${data.language.accepted}`,
@@ -74,8 +78,9 @@ export function formatCatalogStatus(data: CatalogStatusData): string {
     `Unknown/uncertain: ${data.language.byCode.unknown ?? 0}`,
     "",
     "DIFFICULTY",
-    ...DIFFICULTIES.map((difficulty) => `${DIFFICULTY_LABELS[difficulty]}: ${data.difficulty[difficulty]}`),
-    `Unranked: ${data.unrankedTracks}`,
+    ...RANKED_DIFFICULTIES.map((difficulty) => `${RANKED_DIFFICULTY_LABELS[difficulty]}: ${data.difficulty[difficulty]}`),
+    `Unranked (raw): ${data.unrankedTracks}`,
+    `Unranked (gameplay): ${data.gameplayUnrankedTracks}`,
     "",
     "ALL MUSIC (playable)",
     formatPool("All Music", data.allMusic.total, data.allMusic.ranked),

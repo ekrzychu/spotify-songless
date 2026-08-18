@@ -1,5 +1,8 @@
-export const DIFFICULTIES = ["easy", "normal", "hard", "extreme", "impossible"] as const;
-export type Difficulty = (typeof DIFFICULTIES)[number];
+export const RANKED_DIFFICULTIES = ["easy", "normal", "hard", "extreme", "impossible"] as const;
+export type RankedDifficulty = (typeof RANKED_DIFFICULTIES)[number];
+
+export const GAME_DIFFICULTIES = [...RANKED_DIFFICULTIES, "unranked"] as const;
+export type GameDifficulty = (typeof GAME_DIFFICULTIES)[number];
 
 export type Artist = { id: string; name: string };
 
@@ -21,7 +24,7 @@ export type AnswerView = {
   releaseDate: string | null;
   spotifyUrl: string;
   streamCount: string | null;
-  difficulty: Difficulty;
+  difficulty: GameDifficulty;
 };
 
 export type RoundView = {

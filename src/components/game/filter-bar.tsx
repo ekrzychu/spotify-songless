@@ -2,17 +2,17 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { CATEGORY_GROUPS } from "@/lib/catalog/category-config";
-import { DIFFICULTIES, type Difficulty } from "@/types/game";
-import { DIFFICULTY_LABELS } from "@/lib/game/difficulty";
+import { GAME_DIFFICULTIES, type GameDifficulty } from "@/types/game";
+import { GAME_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 import { FilterSelect, type FilterGroup } from "@/components/game/filter-select";
 
 export function FilterBar({
   category, difficulty, disabled, onChange,
 }: {
   category: string;
-  difficulty: Difficulty;
+  difficulty: GameDifficulty;
   disabled?: boolean;
-  onChange: (filters: { category: string; difficulty: Difficulty }) => void;
+  onChange: (filters: { category: string; difficulty: GameDifficulty }) => void;
 }) {
   const [openMenu, setOpenMenu] = useState<"category" | null>(null);
   const close = useCallback(() => setOpenMenu(null), []);
@@ -38,11 +38,12 @@ export function FilterBar({
       <section className="filter-section filter-section--difficulty">
         <h2 className="rail-heading" id="difficulty-heading">Difficulty</h2>
         <div className="difficulty-options" role="group" aria-labelledby="difficulty-heading">
-          {DIFFICULTIES.map((item) => (
+          {GAME_DIFFICULTIES.map((item) => (
             <button
               className="difficulty-option"
               type="button"
               aria-pressed={item === difficulty}
+              data-difficulty={item}
               disabled={disabled}
               key={item}
               onClick={() => {
@@ -50,7 +51,7 @@ export function FilterBar({
                 if (item !== difficulty) onChange({ category, difficulty: item });
               }}
             >
-              <span>{DIFFICULTY_LABELS[item]}</span>
+              <span>{GAME_DIFFICULTY_LABELS[item]}</span>
               <i aria-hidden="true" />
             </button>
           ))}

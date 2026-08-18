@@ -1,17 +1,35 @@
 import type { GameTrack, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import type { Difficulty } from "@/types/game";
+import type { GameDifficulty } from "@/types/game";
 
 export type SelectionInput = {
   sessionId: string;
   category: string;
-  difficulty: Difficulty;
+  difficulty: GameDifficulty;
 };
 
 export type TrackSelection =
   | { status: "selected"; track: GameTrack }
   | { status: "empty" }
   | { status: "exhausted" };
+
+export function gameplaySelectionWhere(
+  category: string,
+  difficulty: GameDifficulty,
+): Prisma.GameTrackWhereInput {
+  const rankingState: Prisma.GameTrackWhereInput = difficulty === "unranked"
+    ? { OR: [{ streamCount: null }, { difficulty: null }] }
+    : { streamCount: { not: null }, difficulty };
+  return {
+    playable: true,
+    gameEligible: true,
+    languageEligible: true,
+    ...rankingState,
+    ...(category === "all" ? {} : {
+      categories: { some: { categoryId: category, gameEligible: true } },
+    }),
+  };
+}
 
 export async function selectRandomTrack(input: SelectionInput): Promise<TrackSelection> {
   const [played, unavailable] = await Promise.all([
@@ -24,16 +42,7 @@ export async function selectRandomTrack(input: SelectionInput): Promise<TrackSel
       select: { trackId: true },
     }),
   ]);
-  const baseWhere: Prisma.GameTrackWhereInput = {
-    playable: true,
-    gameEligible: true,
-    languageEligible: true,
-    streamCount: { not: null },
-    difficulty: input.difficulty,
-    ...(input.category === "all" ? {} : {
-      categories: { some: { categoryId: input.category, gameEligible: true } },
-    }),
-  };
+  const baseWhere = gameplaySelectionWhere(input.category, input.difficulty);
   const playedIds = [...new Set(played.map((round) => round.trackId))];
   const unavailableIds = [...new Set(unavailable.map((item) => item.trackId))];
   const availableWhere: Prisma.GameTrackWhereInput = unavailableIds.length

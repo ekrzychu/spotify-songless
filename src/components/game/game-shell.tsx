@@ -16,12 +16,12 @@ import { migrateStorageKey, STORAGE_KEYS } from "@/lib/client/storage";
 import { checkSpotifyConnection, oauthNotice, type SpotifyConnectionState } from "@/lib/client/spotify-connection";
 import { PlaybackRequestError, useSpotifyPlayer } from "@/hooks/use-spotify-player";
 import { getCategory } from "@/lib/catalog/category-config";
-import { DIFFICULTY_LABELS } from "@/lib/game/difficulty";
+import { GAME_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 import { MAX_ATTEMPTS } from "@/lib/game/snippets";
-import type { Difficulty, RoundView, SearchTrack } from "@/types/game";
+import type { GameDifficulty, RoundView, SearchTrack } from "@/types/game";
 
 type Filters = GameFilters;
-type SavedRound = { id: string; category: string; difficulty: Difficulty };
+type SavedRound = { id: string; category: string; difficulty: GameDifficulty };
 
 export function GameShell() {
   const [connection, setConnection] = useState<SpotifyConnectionState>("checking");
@@ -183,7 +183,7 @@ export function GameShell() {
 
   const modalOpen = Boolean((round?.finished && round.answer) || pendingFilters);
   const currentCategory = getCategory(filters.category)?.label ?? filters.category;
-  const currentDifficulty = DIFFICULTY_LABELS[filters.difficulty];
+  const currentDifficulty = GAME_DIFFICULTY_LABELS[filters.difficulty];
   const currentSnippetLength = round?.snippetLength ?? 0.1;
 
   return (
@@ -223,7 +223,7 @@ export function GameShell() {
           <div className="connect-state pool-cleared" role="status">
             <span className="connect-disc" aria-hidden="true" />
             <h2>You cleared this set.</h2>
-            <p>You&apos;ve heard every available {getCategory(exhaustedPool.category)?.label ?? exhaustedPool.category} · {DIFFICULTY_LABELS[exhaustedPool.difficulty]} track. Switch the category or difficulty to keep digging.</p>
+            <p>You&apos;ve heard every available {getCategory(exhaustedPool.category)?.label ?? exhaustedPool.category} · {GAME_DIFFICULTY_LABELS[exhaustedPool.difficulty]} track. Switch the category or difficulty to keep digging.</p>
           </div>
         ) : (
           <>

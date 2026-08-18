@@ -4,6 +4,7 @@ import { filterSchema, roundIdSchema } from "@/lib/validation";
 describe("API input validation", () => {
   it("accepts configured filters", () => {
     expect(filterSchema.safeParse({ category: "rock", difficulty: "hard" }).success).toBe(true);
+    expect(filterSchema.safeParse({ category: "all", difficulty: "unranked" }).success).toBe(true);
   });
 
   it.each([

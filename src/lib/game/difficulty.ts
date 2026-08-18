@@ -1,4 +1,4 @@
-import type { Difficulty } from "@/types/game";
+import type { GameDifficulty, RankedDifficulty } from "@/types/game";
 
 export const DIFFICULTY_THRESHOLDS = {
   easy: 1_000_000_000,
@@ -7,7 +7,7 @@ export const DIFFICULTY_THRESHOLDS = {
   extreme: 10_000_000,
 } as const;
 
-export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
+export const RANKED_DIFFICULTY_LABELS: Record<RankedDifficulty, string> = {
   easy: "Easy",
   normal: "Normal",
   hard: "Hard",
@@ -15,7 +15,12 @@ export const DIFFICULTY_LABELS: Record<Difficulty, string> = {
   impossible: "Impossible",
 };
 
-export function difficultyFromStreams(streams: number): Difficulty {
+export const GAME_DIFFICULTY_LABELS: Record<GameDifficulty, string> = {
+  ...RANKED_DIFFICULTY_LABELS,
+  unranked: "Unranked",
+};
+
+export function difficultyFromStreams(streams: number): RankedDifficulty {
   if (!Number.isSafeInteger(streams) || streams < 0) {
     throw new RangeError("Stream count must be a non-negative safe integer");
   }

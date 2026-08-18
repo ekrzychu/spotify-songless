@@ -11,7 +11,7 @@ import {
   type EnrichmentTrackCandidate,
   type SoundchartsSelectionOptions,
 } from "@/lib/streams/enrichment-selection";
-import { DIFFICULTIES, type Difficulty } from "@/types/game";
+import { RANKED_DIFFICULTIES, type RankedDifficulty } from "@/types/game";
 
 function track(
   id: string,
@@ -53,7 +53,7 @@ const options: SoundchartsSelectionOptions = {
 function ranked(
   id: string,
   categoryIds: string[],
-  difficulty: Difficulty,
+  difficulty: RankedDifficulty,
   overrides: Partial<EnrichmentTrackCandidate> = {},
 ): EnrichmentTrackCandidate {
   return track(id, categoryIds, {
@@ -227,8 +227,8 @@ describe("neutral Soundcharts planning", () => {
       track("candidate-b", ["hip-hop", "80s"]),
       track("candidate-c", ["rock", "90s"]),
     ];
-    const popCoverage = DIFFICULTIES.map((difficulty) => ranked(`pop-${difficulty}`, ["pop", "2010s"], difficulty));
-    const hipCoverage = DIFFICULTIES.map((difficulty) => ranked(`hip-${difficulty}`, ["hip-hop", "80s"], difficulty));
+    const popCoverage = RANKED_DIFFICULTIES.map((difficulty) => ranked(`pop-${difficulty}`, ["pop", "2010s"], difficulty));
+    const hipCoverage = RANKED_DIFFICULTIES.map((difficulty) => ranked(`hip-${difficulty}`, ["hip-hop", "80s"], difficulty));
     const first = buildSoundchartsEnrichmentPlan([...popCoverage, ...candidates], { ...options, targetPerCell: 1 });
     const second = buildSoundchartsEnrichmentPlan([...hipCoverage, ...candidates], { ...options, targetPerCell: 999 });
 

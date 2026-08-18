@@ -253,6 +253,7 @@ a { color: inherit; }
 }
 .difficulty-option[aria-pressed="true"] i { background: var(--accent-ink); }
 .difficulty-option:disabled { opacity: .42; cursor: default; }
+.difficulty-option[data-difficulty="unranked"]:not([aria-pressed="true"]) { border-style: dashed; color: var(--text-faint); }
 
 /* Primary game column */
 .game-primary {
@@ -614,7 +615,7 @@ footer { display: flex; justify-content: space-between; margin-top: 4px; padding
 .result-outcome { display: inline-block; margin: 21px 0 0; padding: 7px 11px; border: 1px solid var(--border); border-radius: 3px; font-size: 10px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
 .result-outcome.is-win { border-color: #5b7b38; color: var(--success); background: var(--success-soft); }
 .result-outcome.is-loss { border-color: #60302d; color: var(--danger); background: var(--danger-soft); }
-.result-meta { display: grid; grid-template-columns: repeat(2, 1fr); margin: 24px 0 17px; padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.result-meta { display: grid; grid-template-columns: repeat(3, 1fr); margin: 24px 0 17px; padding: 14px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .result-meta div { display: flex; flex-direction: column; gap: 5px; }
 .result-meta div + div { border-left: 1px solid var(--border); }
 .result-meta dt { color: var(--text-faint); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }

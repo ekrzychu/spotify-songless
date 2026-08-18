@@ -4,9 +4,9 @@ import {
   TRACK_QUALITY_REASONS,
   type TrackQualityReason,
 } from "@/lib/catalog/track-quality";
-import { DIFFICULTY_LABELS } from "@/lib/game/difficulty";
+import { RANKED_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 import { normalizeIsrc } from "@/lib/streams/import-normalizer";
-import { DIFFICULTIES, type Difficulty } from "@/types/game";
+import { RANKED_DIFFICULTIES, type RankedDifficulty } from "@/types/game";
 
 export const DEFAULT_ENRICHMENT_LIMIT = 100;
 export const DEFAULT_TARGET_PER_CELL = 10;
@@ -54,7 +54,7 @@ export type EnrichmentRecordingGroup = {
   hasConflictingCachedUuids: boolean;
 };
 
-export type DifficultyCoverage = Record<Difficulty, number>;
+export type DifficultyCoverage = Record<RankedDifficulty, number>;
 
 export type RankedCoverageMatrix = {
   allMusic: DifficultyCoverage;
@@ -64,7 +64,7 @@ export type RankedCoverageMatrix = {
 export type UnderfilledCell = {
   categoryId: string;
   categoryLabel: string;
-  difficulty: Difficulty;
+  difficulty: RankedDifficulty;
   ranked: number;
   target: number;
   deficit: number;
@@ -390,7 +390,7 @@ export function formatSoundchartsEnrichmentPlan(
     "",
     "MOST UNDERFILLED CELLS (REPORTING ONLY; DOES NOT AFFECT SELECTION)",
     ...plan.underfilledCells.slice(0, 20).map((cell, index) => (
-      `${index + 1}. ${cell.categoryLabel} x ${DIFFICULTY_LABELS[cell.difficulty]}: ${cell.ranked} / ${cell.target}`
+      `${index + 1}. ${cell.categoryLabel} x ${RANKED_DIFFICULTY_LABELS[cell.difficulty]}: ${cell.ranked} / ${cell.target}`
     )),
     ...(plan.underfilledCells.length === 0 ? ["All active cells meet the planning target."] : []),
     "",
@@ -484,13 +484,13 @@ function emptyDifficultyCoverage(): DifficultyCoverage {
   return { easy: 0, normal: 0, hard: 0, extreme: 0, impossible: 0 };
 }
 
-function asDifficulty(value: string | null): Difficulty | null {
-  return DIFFICULTIES.find((difficulty) => difficulty === value) ?? null;
+function asDifficulty(value: string | null): RankedDifficulty | null {
+  return RANKED_DIFFICULTIES.find((difficulty) => difficulty === value) ?? null;
 }
 
 function buildUnderfilledCells(coverage: RankedCoverageMatrix, target: number): UnderfilledCell[] {
   const categoryIndex = new Map(ACTIVE_ENRICHMENT_CATEGORIES.map((category, index) => [category.id, index]));
-  return ACTIVE_ENRICHMENT_CATEGORIES.flatMap((category) => DIFFICULTIES.map((difficulty) => {
+  return ACTIVE_ENRICHMENT_CATEGORIES.flatMap((category) => RANKED_DIFFICULTIES.map((difficulty) => {
     const ranked = coverage.categories[category.id]![difficulty];
     return {
       categoryId: category.id,
@@ -503,7 +503,7 @@ function buildUnderfilledCells(coverage: RankedCoverageMatrix, target: number): 
   })).filter((cell) => cell.deficit > 0).sort((left, right) => (
     right.deficit - left.deficit
     || categoryIndex.get(left.categoryId)! - categoryIndex.get(right.categoryId)!
-    || DIFFICULTIES.indexOf(left.difficulty) - DIFFICULTIES.indexOf(right.difficulty)
+    || RANKED_DIFFICULTIES.indexOf(left.difficulty) - RANKED_DIFFICULTIES.indexOf(right.difficulty)
   ));
 }
 
@@ -522,11 +522,11 @@ function formatCoverageTable(rows: Array<{ label: string; coverage: DifficultyCo
   const labelWidth = 22;
   const cellWidth = 11;
   const header = `${"".padEnd(labelWidth)}${[
-    ...DIFFICULTIES.map((difficulty) => DIFFICULTY_LABELS[difficulty]),
+    ...RANKED_DIFFICULTIES.map((difficulty) => RANKED_DIFFICULTY_LABELS[difficulty]),
     "Total",
   ].map((label) => label.padStart(cellWidth)).join("")}`;
   return [header, ...rows.map((row) => {
-    const values = DIFFICULTIES.map((difficulty) => row.coverage[difficulty]);
+    const values = RANKED_DIFFICULTIES.map((difficulty) => row.coverage[difficulty]);
     const total = values.reduce((sum, value) => sum + value, 0);
     return `${row.label.padEnd(labelWidth)}${[...values, total]
       .map((value) => String(value).padStart(cellWidth)).join("")}`;

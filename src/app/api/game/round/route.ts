@@ -23,7 +23,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           db.gameTrack.count(),
           db.gameTrack.count({ where: { playable: true, streamCount: { not: null } } }),
         ]);
-        if (catalogTracks > 0 && rankedTracks === 0) {
+        if (parsed.data.difficulty !== "unranked" && catalogTracks > 0 && rankedTracks === 0) {
           message = "No ranked songs are available yet. Import verified stream-count data to enable gameplay.";
         }
       }

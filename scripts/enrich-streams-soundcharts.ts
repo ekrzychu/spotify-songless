@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
-import { DIFFICULTY_LABELS } from "../src/lib/game/difficulty";
+import { RANKED_DIFFICULTY_LABELS } from "../src/lib/game/difficulty";
 import {
   formatSoundchartsRequestTelemetry,
   SoundchartsApiError,
@@ -203,7 +203,7 @@ async function main(): Promise<void> {
             summary.updatedGroups += 1;
             summary.localTracksUpdated += result.localTracksUpdated;
             console.log(`Aggregated streams: ${result.providerResult.streamCount!.toLocaleString("en-US")}`);
-            console.log(`Difficulty: ${result.difficulty ? DIFFICULTY_LABELS[result.difficulty] : "not assigned"}`);
+            console.log(`Difficulty: ${result.difficulty ? RANKED_DIFFICULTY_LABELS[result.difficulty] : "not assigned"}`);
             console.log(`Status: UPDATED (${result.localTracksUpdated} local track(s))`);
           } else {
             summary.audienceUnavailable += 1;

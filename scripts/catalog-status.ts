@@ -5,8 +5,9 @@ import {
   formatCatalogStatus,
   type CatalogPoolStatus,
 } from "../src/lib/catalog/catalog-status-report";
-import { DIFFICULTIES, type Difficulty } from "../src/types/game";
+import { RANKED_DIFFICULTIES, type RankedDifficulty } from "../src/types/game";
 import { isAcceptedGameLanguage } from "../src/lib/catalog/track-language";
+import { gameplaySelectionWhere } from "../src/lib/game/selection";
 
 async function main(): Promise<void> {
   const categories = activeCatalogStatusCategories();
@@ -17,6 +18,8 @@ async function main(): Promise<void> {
     gameIneligibleTracks,
     rankedTracks,
     gameplayRankedTracks,
+    unrankedTracks,
+    gameplayUnrankedTracks,
     difficultyCounts,
     allMusicRanked,
     languageRows,
@@ -34,7 +37,11 @@ async function main(): Promise<void> {
       difficulty: { not: null },
       streamCount: { not: null },
     } }),
-    Promise.all(DIFFICULTIES.map(async (difficulty) => [
+    db.gameTrack.count({ where: {
+      OR: [{ streamCount: null }, { difficulty: null }],
+    } }),
+    db.gameTrack.count({ where: gameplaySelectionWhere("all", "unranked") }),
+    Promise.all(RANKED_DIFFICULTIES.map(async (difficulty) => [
       difficulty,
       await db.gameTrack.count({ where: { difficulty, streamCount: { not: null } } }),
     ] as const)),
@@ -73,7 +80,7 @@ async function main(): Promise<void> {
       return { ...category, total, ranked, gameplayRanked };
     })),
   ]);
-  const difficulty = Object.fromEntries(difficultyCounts) as Record<Difficulty, number>;
+  const difficulty = Object.fromEntries(difficultyCounts) as Record<RankedDifficulty, number>;
   const acceptedLanguageRows = languageRows.filter((track) => isAcceptedGameLanguage(track.languageCode));
   const classifiedAllowedRows = acceptedLanguageRows.filter((track) => track.languageCode !== null);
   const unclassifiedAcceptedRows = acceptedLanguageRows.filter((track) => track.languageCode === null);
@@ -90,7 +97,8 @@ async function main(): Promise<void> {
     gameIneligibleTracks,
     rankedTracks,
     gameplayRankedTracks,
-    unrankedTracks: totalTracks - rankedTracks,
+    unrankedTracks,
+    gameplayUnrankedTracks,
     language: {
       accepted: acceptedLanguageRows.length,
       classifiedAllowed: classifiedAllowedRows.length,
