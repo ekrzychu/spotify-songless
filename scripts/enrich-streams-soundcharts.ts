@@ -135,7 +135,7 @@ async function main(): Promise<void> {
       difficulty: true,
       playable: true,
       gameEligible: true,
-      categories: { select: { categoryId: true } },
+      categories: { select: { categoryId: true, gameEligible: true } },
     },
   });
   const plan = buildSoundchartsEnrichmentPlan(candidates, options);

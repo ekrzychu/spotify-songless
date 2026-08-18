@@ -29,7 +29,9 @@ export async function selectRandomTrack(input: SelectionInput): Promise<TrackSel
     gameEligible: true,
     streamCount: { not: null },
     difficulty: input.difficulty,
-    ...(input.category === "all" ? {} : { categories: { some: { categoryId: input.category } } }),
+    ...(input.category === "all" ? {} : {
+      categories: { some: { categoryId: input.category, gameEligible: true } },
+    }),
   };
   const playedIds = [...new Set(played.map((round) => round.trackId))];
   const unavailableIds = [...new Set(unavailable.map((item) => item.trackId))];

@@ -42,7 +42,7 @@ async function main(): Promise<void> {
     } }),
     Promise.all(categories.map(async (category): Promise<CatalogPoolStatus> => {
       const relation = { some: { categoryId: category.id } };
-      const [total, ranked] = await Promise.all([
+      const [total, ranked, gameplayRanked] = await Promise.all([
         db.gameTrack.count({ where: { playable: true, categories: relation } }),
         db.gameTrack.count({ where: {
           playable: true,
@@ -50,8 +50,15 @@ async function main(): Promise<void> {
           streamCount: { not: null },
           categories: relation,
         } }),
+        db.gameTrack.count({ where: {
+          playable: true,
+          gameEligible: true,
+          difficulty: { not: null },
+          streamCount: { not: null },
+          categories: { some: { categoryId: category.id, gameEligible: true } },
+        } }),
       ]);
-      return { ...category, total, ranked };
+      return { ...category, total, ranked, gameplayRanked };
     })),
   ]);
   const difficulty = Object.fromEntries(difficultyCounts) as Record<Difficulty, number>;

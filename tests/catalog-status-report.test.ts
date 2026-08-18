@@ -26,7 +26,7 @@ describe("catalog status report", () => {
       unrankedTracks: 60,
       difficulty: { easy: 10, normal: 10, hard: 10, extreme: 5, impossible: 5 },
       allMusic: { total: 90, ranked: 35 },
-      pools: categories.map((category) => ({ ...category, total: 20, ranked: 8 })),
+      pools: categories.map((category) => ({ ...category, total: 20, ranked: 8, gameplayRanked: 7 })),
     };
     const report = formatCatalogStatus(data);
     expect(report).toContain("CATALOG STATUS");
@@ -37,6 +37,8 @@ describe("catalog status report", () => {
     expect(report).toContain("Game-ineligible tracks: 12");
     expect(report).toContain("Ranked tracks (raw): 40");
     expect(report).toContain("Game-eligible ranked tracks (playable): 35");
+    expect(report).toContain("GAMEPLAY-ENABLED RANKED CATEGORY COVERAGE");
+    expect(report).toContain("R&B / Soul: 7");
     expect(report).not.toMatch(/Indie|Metal|Punk|Country|Jazz/);
   });
 });

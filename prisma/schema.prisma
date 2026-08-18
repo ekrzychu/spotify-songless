@@ -48,12 +48,16 @@ model SessionUnavailableTrack {
 }
 
 model TrackCategory {
-  trackId    String
-  categoryId String
-  track      GameTrack @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  trackId                  String
+  categoryId               String
+  gameEligible             Boolean   @default(true)
+  gameEligibilitySource    String?
+  gameEligibilityUpdatedAt DateTime?
+  track                    GameTrack @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
   @@id([trackId, categoryId])
   @@index([categoryId])
+  @@index([categoryId, gameEligible])
 }
 
 model GameRound {

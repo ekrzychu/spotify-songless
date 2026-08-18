@@ -1,4 +1,8 @@
 import { CATEGORIES } from "@/lib/catalog/category-config";
+import {
+  mapSoundchartsGenresToActiveCategories,
+  parseStoredSoundchartsGenres,
+} from "@/lib/catalog/soundcharts-genre-mapping";
 import type { SoundchartsSongGenre } from "@/lib/soundcharts/client";
 
 const ACTIVE_GENRES = CATEGORIES.filter((category) => category.type === "genre");
@@ -12,7 +16,11 @@ export type SoundchartsMetadataAuditTrack = {
   soundchartsReleaseDate: string | null;
   soundchartsGenresJson: string | null;
   streamCount: bigint | null;
-  categories: ReadonlyArray<{ categoryId: string }>;
+  categories: ReadonlyArray<{
+    categoryId: string;
+    gameEligible: boolean;
+    gameEligibilitySource: string | null;
+  }>;
 };
 
 export type SoundchartsMetadataAudit = {
@@ -33,7 +41,9 @@ export type SoundchartsMetadataAudit = {
   potentialMismatches: Array<{
     title: string;
     artistNames: string;
-    localGenres: string[];
+    rawLocalGenres: string[];
+    gameplayEnabledGenres: string[];
+    mappedSoundchartsGenres: string[];
     soundchartsRootGenres: string[];
   }>;
 };
@@ -44,32 +54,6 @@ function releaseYear(value: string | null): number | null {
   if (!match) return null;
   const year = Number(match[1]);
   return Number.isSafeInteger(year) && year >= 1 && year <= 9999 ? year : null;
-}
-
-function parseGenres(value: string | null): SoundchartsSongGenre[] {
-  if (!value) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((raw): SoundchartsSongGenre[] => {
-      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return [];
-      const genre = raw as Record<string, unknown>;
-      const root = typeof genre.root === "string" ? genre.root.trim() : "";
-      if (!root) return [];
-      const sub = Array.isArray(genre.sub)
-        ? genre.sub.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-          .map((item) => item.trim())
-        : [];
-      return [{ root, sub }];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function normalizeGenre(value: string): string {
-  return value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase("en-US")
-    .replace(/[^\p{L}\p{N}]+/gu, " ").trim().replace(/\s+/gu, " ");
 }
 
 function increment(counter: Map<string, number>, values: Iterable<string>): void {
@@ -121,24 +105,28 @@ export function buildSoundchartsMetadataAudit(
       }
     }
 
-    const genres = parseGenres(track.soundchartsGenresJson);
+    const genres: SoundchartsSongGenre[] = parseStoredSoundchartsGenres(track.soundchartsGenresJson) ?? [];
     increment(rootCounts, genres.map((genre) => genre.root));
     increment(subgenreCounts, genres.flatMap((genre) => genre.sub));
     if (track.streamCount !== null && genres.length > 0 && potentialMismatches.length < exampleLimit) {
-      const localGenres = ACTIVE_GENRES.filter((genre) => (
+      const rawLocalGenres = ACTIVE_GENRES.filter((genre) => (
         track.categories.some((relation) => relation.categoryId === genre.id)
       ));
-      const localNames = new Set(localGenres.flatMap((genre) => [
-        normalizeGenre(genre.id),
-        normalizeGenre(genre.label),
-      ]));
+      const gameplayEnabledGenres = rawLocalGenres.filter((genre) => track.categories.some((relation) => (
+        relation.categoryId === genre.id && relation.gameEligible
+      )));
+      const mappedGenreIds = mapSoundchartsGenresToActiveCategories(genres);
+      const mapped = new Set<string>(mappedGenreIds);
       const roots = [...new Set(genres.map((genre) => genre.root))];
-      const hasExactMatch = roots.some((root) => localNames.has(normalizeGenre(root)));
-      if (!hasExactMatch) {
+      if (mapped.size > 0 && rawLocalGenres.some((genre) => !mapped.has(genre.id))) {
         potentialMismatches.push({
           title: track.title,
           artistNames: track.artistNames,
-          localGenres: localGenres.map((genre) => genre.label),
+          rawLocalGenres: rawLocalGenres.map((genre) => genre.label),
+          gameplayEnabledGenres: gameplayEnabledGenres.map((genre) => genre.label),
+          mappedSoundchartsGenres: ACTIVE_GENRES
+            .filter((genre) => mapped.has(genre.id))
+            .map((genre) => genre.label),
           soundchartsRootGenres: roots,
         });
       }
@@ -187,7 +175,7 @@ export function formatSoundchartsMetadataAudit(audit: SoundchartsMetadataAudit):
     "POTENTIAL GENRE MISMATCHES (RANKED TRACKS)",
     "These are conservative review candidates, not confirmed errors or automatic mappings.",
     ...audit.potentialMismatches.map((example) => (
-      `  - ${example.title} - ${example.artistNames}: local [${example.localGenres.join(", ") || "none"}]; Soundcharts [${example.soundchartsRootGenres.join(", ")}]`
+      `  - ${example.title} - ${example.artistNames}: raw local [${example.rawLocalGenres.join(", ") || "none"}]; gameplay-enabled [${example.gameplayEnabledGenres.join(", ") || "none"}]; Soundcharts mapped [${example.mappedSoundchartsGenres.join(", ") || "none"}]; roots [${example.soundchartsRootGenres.join(", ")}]`
     )),
     ...(audit.potentialMismatches.length === 0 ? ["  None"] : []),
     "",

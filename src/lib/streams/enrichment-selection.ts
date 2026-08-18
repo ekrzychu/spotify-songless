@@ -35,7 +35,7 @@ export type EnrichmentTrackCandidate = {
   difficulty: string | null;
   playable: boolean;
   gameEligible: boolean;
-  categories: ReadonlyArray<{ categoryId: string }>;
+  categories: ReadonlyArray<{ categoryId: string; gameEligible: boolean }>;
 };
 
 export type EnrichmentRecordingGroup = {
@@ -186,7 +186,9 @@ export function groupEnrichmentCandidates(
       tracks: orderedTracks,
       targetTrackIds: targets.map((track) => track.id),
       representative: orderedTracks.find((track) => targetIds.has(track.id))!,
-      categoryIds: [...new Set(targets.flatMap((track) => track.categories.map((item) => item.categoryId)))],
+      categoryIds: [...new Set(targets.flatMap((track) => track.categories
+        .filter((item) => item.gameEligible)
+        .map((item) => item.categoryId)))],
       cachedSoundchartsUuid: cachedUuids.length === 1 ? cachedUuids[0]! : null,
       hasConflictingCachedUuids: cachedUuids.length > 1,
     });
@@ -207,7 +209,9 @@ export function buildRankedCoverageMatrix(
     if (!isGameplayRanked(track)) continue;
     const difficulty = asDifficulty(track.difficulty)!;
     allMusic[difficulty] += 1;
-    for (const categoryId of new Set(track.categories.map((category) => category.categoryId))) {
+    for (const categoryId of new Set(track.categories
+      .filter((category) => category.gameEligible)
+      .map((category) => category.categoryId))) {
       if (activeIds.has(categoryId)) categories[categoryId]![difficulty] += 1;
     }
   }
@@ -261,14 +265,10 @@ export function buildSoundchartsEnrichmentPlan(
   const selectedGroups = eligible
     .map((group): PlannedEnrichmentGroup => {
       const activeCategoryIds = ENRICHMENT_BALANCE_CATEGORY_IDS.filter((id) => group.categoryIds.includes(id));
-      const topNeeds = activeCategoryIds
-        .map((id) => categoryNeed.get(id) ?? 0)
-        .sort((left, right) => right - left)
-        .slice(0, 3);
       return {
         ...group,
         activeCategoryIds,
-        needScore: topNeeds.reduce((total, need) => total + need, 0),
+        needScore: scoreEnrichmentCategoryNeeds(activeCategoryIds, categoryNeed),
         difficulty: "unknown",
         estimatedCustomerRequests: estimateGroupRequests(group),
       };
@@ -401,8 +401,25 @@ export function formatSoundchartsEnrichmentPlan(
     `Upper customer API HTTP requests: ${plan.requestEstimate.upper}`,
     "HTTP request estimate, NOT guaranteed quota consumption. Retries are not included.",
     "",
-    "Scoring sums the three largest active category deficits per recording group. This rewards useful overlap while capping the advantage of tracks with many labels.",
+    "Scoring sums at most the two largest enabled genre deficits plus the single largest enabled decade deficit per recording group.",
   ].join("\n");
+}
+
+export function scoreEnrichmentCategoryNeeds(
+  categoryIds: readonly string[],
+  categoryNeed: ReadonlyMap<string, number>,
+): number {
+  const categoryType = new Map(ACTIVE_ENRICHMENT_CATEGORIES.map((category) => [category.id, category.type]));
+  const genreContribution = categoryIds
+    .filter((categoryId) => categoryType.get(categoryId) === "genre")
+    .map((categoryId) => categoryNeed.get(categoryId) ?? 0)
+    .sort((left, right) => right - left)
+    .slice(0, 2)
+    .reduce((total, need) => total + need, 0);
+  const decadeContribution = Math.max(0, ...categoryIds
+    .filter((categoryId) => categoryType.get(categoryId) === "decade")
+    .map((categoryId) => categoryNeed.get(categoryId) ?? 0));
+  return genreContribution + decadeContribution;
 }
 
 export function parseSoundchartsPlanningOptions(args: readonly string[]): SoundchartsPlanningOptions {

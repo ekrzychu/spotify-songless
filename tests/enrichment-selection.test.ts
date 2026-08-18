@@ -7,6 +7,7 @@ import {
   groupEnrichmentCandidates,
   parseSoundchartsExecutionOptions,
   parseSoundchartsPlanningOptions,
+  scoreEnrichmentCategoryNeeds,
   type EnrichmentTrackCandidate,
   type SoundchartsSelectionOptions,
 } from "@/lib/streams/enrichment-selection";
@@ -30,7 +31,7 @@ function track(
     difficulty: null,
     playable: true,
     gameEligible: true,
-    categories: categories.map((categoryId) => ({ categoryId })),
+    categories: categories.map((categoryId) => ({ categoryId, gameEligible: true })),
     ...overrides,
   };
 }
@@ -165,6 +166,20 @@ describe("adaptive Soundcharts planning", () => {
     });
   });
 
+  it("counts a disabled genre relation in All Music but not that genre's gameplay coverage", () => {
+    const disabledRnb = ranked("searchers", ["r-and-b", "60s"], "hard", {
+      categories: [
+        { categoryId: "r-and-b", gameEligible: false },
+        { categoryId: "90s", gameEligible: true },
+      ],
+    });
+    const coverage = buildRankedCoverageMatrix([disabledRnb]);
+
+    expect(coverage.allMusic.hard).toBe(1);
+    expect(coverage.categories["r-and-b"]?.hard).toBe(0);
+    expect(coverage.categories["90s"]?.hard).toBe(1);
+  });
+
   it("prioritizes candidates serving thinner genre and decade cells", () => {
     const fullCategories = DIFFICULTIES.map((difficulty) => (
       ranked(`full-${difficulty}`, ["pop", "2010s"], difficulty)
@@ -178,6 +193,34 @@ describe("adaptive Soundcharts planning", () => {
 
     expect(plan.selectedGroups[0]?.representative.id).toBe("candidate-b");
     expect(plan.selectedGroups[0]?.needScore).toBeGreaterThan(plan.selectedGroups[1]?.needScore ?? 0);
+  });
+
+  it("scores at most two genre needs plus one highest decade need", () => {
+    const needs = new Map([
+      ["pop", 5],
+      ["hip-hop", 8],
+      ["rock", 4],
+      ["80s", 7],
+      ["90s", 6],
+    ]);
+
+    expect(scoreEnrichmentCategoryNeeds(["pop", "80s", "90s"], needs)).toBe(12);
+    expect(scoreEnrichmentCategoryNeeds(["hip-hop", "80s"], needs)).toBe(15);
+    expect(scoreEnrichmentCategoryNeeds(["pop", "hip-hop", "rock", "80s", "90s"], needs)).toBe(20);
+  });
+
+  it("does not score a rejected candidate category relation", () => {
+    const plan = buildSoundchartsEnrichmentPlan([
+      track("candidate", ["pop"], {
+        categories: [
+          { categoryId: "pop", gameEligible: true },
+          { categoryId: "r-and-b", gameEligible: false },
+          { categoryId: "80s", gameEligible: true },
+        ],
+      }),
+    ], options);
+
+    expect(plan.selectedGroups[0]?.activeCategoryIds).toEqual(["pop", "80s"]);
   });
 
   it("keeps unranked candidate difficulty explicitly unknown", () => {

@@ -8,6 +8,7 @@ export type CatalogPoolStatus = {
   type: "genre" | "decade";
   total: number;
   ranked: number;
+  gameplayRanked: number;
 };
 
 export type CatalogStatusData = {
@@ -61,6 +62,15 @@ export function formatCatalogStatus(data: CatalogStatusData): string {
     "",
     "DECADES (playable)",
     ...decades.map((pool) => formatPool(pool.label, pool.total, pool.ranked)),
+    "",
+    "GAMEPLAY-ENABLED RANKED CATEGORY COVERAGE",
+    `All Music: ${data.gameplayRankedTracks}`,
+    "",
+    "GENRES",
+    ...genres.map((pool) => `${pool.label}: ${pool.gameplayRanked}`),
+    "",
+    "DECADES",
+    ...decades.map((pool) => `${pool.label}: ${pool.gameplayRanked}`),
   ].join("\n");
 }
 

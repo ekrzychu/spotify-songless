@@ -35,7 +35,7 @@ describe("random track selection", () => {
       gameEligible: true,
       streamCount: { not: null },
       difficulty: "hard",
-      categories: { some: { categoryId: "rock" } },
+      categories: { some: { categoryId: "rock", gameEligible: true } },
       id: { notIn: ["heard-track"] },
     } });
     expect(mocks.findTrack).toHaveBeenCalledWith(expect.objectContaining({ skip: 0 }));
@@ -55,6 +55,17 @@ describe("random track selection", () => {
     await selectRandomTrack({ sessionId: "session", category: "all", difficulty: "easy" });
     const where = mocks.count.mock.calls[0]?.[0].where as Record<string, unknown>;
     expect(where.categories).toBeUndefined();
+  });
+
+  it("requires an enabled relation for category play but ignores relations for All Music", async () => {
+    await selectRandomTrack({ sessionId: "session", category: "r-and-b", difficulty: "impossible" });
+    expect(mocks.count.mock.calls[0]?.[0].where.categories).toEqual({
+      some: { categoryId: "r-and-b", gameEligible: true },
+    });
+
+    mocks.count.mockClear();
+    await selectRandomTrack({ sessionId: "session", category: "all", difficulty: "impossible" });
+    expect(mocks.count.mock.calls[0]?.[0].where.categories).toBeUndefined();
   });
 
   it("reports exhaustion instead of recycling a one-song pool", async () => {

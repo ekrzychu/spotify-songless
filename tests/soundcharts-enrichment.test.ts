@@ -3,6 +3,7 @@ import type { EnrichmentRecordingGroup, EnrichmentTrackCandidate } from "@/lib/s
 
 const database = vi.hoisted(() => ({
   gameTrack: { updateMany: vi.fn() },
+  trackCategory: { findMany: vi.fn(), update: vi.fn() },
 }));
 
 vi.mock("@/lib/db", () => ({ db: database }));
@@ -21,7 +22,7 @@ const representative: EnrichmentTrackCandidate = {
   difficulty: null,
   playable: true,
   gameEligible: true,
-  categories: [{ categoryId: "pop" }],
+  categories: [{ categoryId: "pop", gameEligible: true }],
 };
 
 const group: EnrichmentRecordingGroup = {
@@ -39,6 +40,8 @@ describe("Soundcharts database enrichment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     database.gameTrack.updateMany.mockResolvedValue({ count: 1 });
+    database.trackCategory.findMany.mockResolvedValue([]);
+    database.trackCategory.update.mockResolvedValue({});
   });
 
   it("atomically writes provenance and the existing centralized difficulty", async () => {
@@ -73,7 +76,9 @@ describe("Soundcharts database enrichment", () => {
         streamCountUpdatedAt: now,
       },
     });
-    expect(database).not.toHaveProperty("trackCategory");
+    expect(database.trackCategory.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ trackId: { in: ["track-1", "track-2"] } }),
+    }));
   });
 
   it("stores only the reusable UUID when audience data is unavailable", async () => {
@@ -123,5 +128,41 @@ describe("Soundcharts database enrichment", () => {
       id: { in: ["track-1"] },
       OR: [{ streamCount: null }, { streamCountSource: "soundcharts" }],
     });
+    expect(database.trackCategory.findMany).not.toHaveBeenCalled();
+  });
+
+  it("validates existing active genre relations after fresh metadata without adding or deleting rows", async () => {
+    const now = new Date("2026-08-18T12:00:00Z");
+    database.trackCategory.findMany.mockResolvedValue([{
+      trackId: "track-1",
+      categoryId: "r-and-b",
+      gameEligible: true,
+      gameEligibilitySource: null,
+    }]);
+    const provider = {
+      getStreamCountResult: vi.fn().mockResolvedValue({
+        soundchartsUuid: "soundcharts-uuid",
+        streamCount: 100,
+        audienceDate: "2026-08-18T00:00:00Z",
+        identifierCount: 1,
+        uniqueValueCount: 1,
+        resolutionSource: "spotify",
+        soundchartsReleaseDate: null,
+        soundchartsGenres: [{ root: "pop", sub: [] }, { root: "rock", sub: ["folk"] }],
+      }),
+    };
+
+    await enrichRecordingGroup(group, provider, { now });
+
+    expect(database.trackCategory.update).toHaveBeenCalledWith({
+      where: { trackId_categoryId: { trackId: "track-1", categoryId: "r-and-b" } },
+      data: {
+        gameEligible: false,
+        gameEligibilitySource: "soundcharts",
+        gameEligibilityUpdatedAt: now,
+      },
+    });
+    expect(database.trackCategory).not.toHaveProperty("delete");
+    expect(database.trackCategory).not.toHaveProperty("create");
   });
 });

@@ -23,7 +23,13 @@ async function main(): Promise<void> {
       soundchartsReleaseDate: true,
       soundchartsGenresJson: true,
       streamCount: true,
-      categories: { select: { categoryId: true } },
+      categories: {
+        select: {
+          categoryId: true,
+          gameEligible: true,
+          gameEligibilitySource: true,
+        },
+      },
     },
   });
   console.log(formatSoundchartsMetadataAudit(buildSoundchartsMetadataAudit(tracks)));

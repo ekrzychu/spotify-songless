@@ -14,7 +14,7 @@ function track(overrides: Partial<SoundchartsMetadataAuditTrack> = {}): Soundcha
     soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
     soundchartsGenresJson: JSON.stringify([{ root: "Pop", sub: ["Art Pop"] }]),
     streamCount: 100n,
-    categories: [{ categoryId: "pop" }],
+    categories: [{ categoryId: "pop", gameEligible: true, gameEligibilitySource: null }],
     ...overrides,
   };
 }
@@ -74,18 +74,20 @@ describe("Soundcharts metadata audit", () => {
       track({
         id: "mismatch",
         spotifyTrackId: "spotify-mismatch",
-        categories: [{ categoryId: "classical" }],
+        categories: [{ categoryId: "classical", gameEligible: false, gameEligibilitySource: "soundcharts" }],
       }),
       track({
         id: "unranked",
         spotifyTrackId: "spotify-unranked",
         streamCount: null,
-        categories: [{ categoryId: "classical" }],
+        categories: [{ categoryId: "classical", gameEligible: true, gameEligibilitySource: null }],
       }),
     ]);
 
     expect(audit.potentialMismatches).toEqual([expect.objectContaining({
-      localGenres: ["Classical"],
+      rawLocalGenres: ["Classical"],
+      gameplayEnabledGenres: [],
+      mappedSoundchartsGenres: ["Pop"],
       soundchartsRootGenres: ["Pop"],
     })]);
   });

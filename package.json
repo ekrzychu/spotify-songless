@@ -21,6 +21,7 @@
     "catalog:audit-genres": "tsx --env-file=.env.local scripts/audit-catalog-genres.ts",
     "catalog:backfill-decades": "tsx --env-file=.env.local scripts/backfill-decade-categories.ts",
     "catalog:backfill-game-eligibility": "tsx --env-file=.env.local scripts/backfill-game-eligibility.ts",
+    "catalog:backfill-game-categories": "tsx --env-file=.env.local scripts/backfill-game-categories.ts",
     "catalog:audit-soundcharts-metadata": "tsx --env-file=.env.local scripts/audit-soundcharts-metadata.ts",
     "soundcharts:test": "tsx --env-file=.env.local scripts/test-soundcharts.ts",
     "streams:plan:soundcharts": "tsx --env-file=.env.local scripts/plan-soundcharts-enrichment.ts",

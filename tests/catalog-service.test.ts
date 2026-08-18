@@ -51,6 +51,7 @@ describe("catalog metadata upsert preservation", () => {
     }
     expect(mocks.upsertCategory).toHaveBeenCalledWith(expect.objectContaining({
       where: { trackId_categoryId: { trackId: "database-track", categoryId: "pop" } },
+      update: {},
     }));
     expect(mocks.assignDerivedCategories).toHaveBeenCalledWith("database-track", "2020-01-02");
   });

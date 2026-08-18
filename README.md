@@ -180,7 +180,7 @@ Canary mode selects exactly one recording group, disables refresh, and permits a
 npm run streams:enrich:soundcharts -- --limit=10 --max-api-requests=30
 ```
 
-Execution uses the same deterministic deficit-aware selector as the planner. Active genre and decade deficits drive selection, with the three largest category deficits per recording group contributing to its score. This rewards useful category overlap without letting heavily tagged tracks dominate. Re-run the planner after each batch because newly verified difficulty values change the coverage matrix.
+Execution uses the same deterministic deficit-aware selector as the planner. Active genre and decade deficits drive selection, with at most the two largest gameplay-enabled genre deficits plus the single largest gameplay-enabled decade deficit contributing to each recording group's score. This preserves multi-genre utility without allowing multiple release-decade relations to inflate one song. Re-run the planner after each batch because newly verified difficulty values change the coverage matrix.
 
 The default execution limit is 100 groups, the maximum is 400, and the default hard customer API request budget is 300. Every customer attempt, including a 429 retry, consumes that execution budget; the OAuth request does not. The client does not call `/api/v2/team/usage` automatically. `SOUNDCHARTS_QUOTA_RESERVE` is enforced only after a valid quota header has been observed, while the hard request budget protects runs whose quota remains unknown.
 
@@ -194,7 +194,15 @@ npm run streams:enrich:soundcharts -- --limit 100 --refresh
 
 Resolved songs without audience data retain a null stream count and difficulty. The Soundcharts UUID is cached so a deliberate later attempt can skip identifier resolution; these cached-unranked groups remain excluded unless `--include-cached-unranked` is supplied.
 
-Fresh song resolution also retains optional Soundcharts `releaseDate` and normalized root/subgenre metadata from that same resolver response, so capturing it costs no additional request. Metadata is propagated to every local Spotify version in the recording group. A group using an already-cached UUID does not perform another resolution merely to fill missing metadata, so older enriched rows may legitimately remain null. Soundcharts metadata is provenance-specific evidence: it never overwrites Spotify release data or automatically changes `TrackCategory` genre/decade relations.
+Fresh song resolution also retains optional Soundcharts `releaseDate` and normalized root/subgenre metadata from that same resolver response, so capturing it costs no additional request. Metadata is propagated to every local Spotify version in the recording group. A group using an already-cached UUID does not perform another resolution merely to fill missing metadata, so older enriched rows may legitimately remain null.
+
+Raw `TrackCategory` rows preserve Spotify discovery associations. Each row has separate gameplay trust fields; normal category rounds, planner coverage, and candidate scoring require the relation to be gameplay-enabled. Fresh Soundcharts genre metadata validates only existing active genre relations through a small explicit alias table. Supported relations are enabled, unsupported relations are disabled only when at least one active Soundcharts genre maps successfully, and unmapped evidence leaves trust unchanged. Validation never creates or deletes genre rows and never validates decades. Apply the same rules to stored metadata locally with:
+
+```powershell
+npm run catalog:backfill-game-categories
+```
+
+The command is deterministic, idempotent, SQLite-only, and makes no external requests. Spotify catalog rediscovery keeps `update: {}` for existing relations, so it cannot silently re-enable a validated rejection.
 
 Audit the stored evidence without network access or database writes:
 
@@ -202,7 +210,7 @@ Audit the stored evidence without network access or database writes:
 npm run catalog:audit-soundcharts-metadata
 ```
 
-The SQLite-only report compares Spotify and Soundcharts release years/decades, lists the actual stored root genres and subgenres, and shows conservative potential genre mismatches for ranked tracks. It does not invent mappings or mutate category relations.
+The SQLite-only report compares Spotify and Soundcharts release years/decades, lists the actual stored root genres and subgenres, and distinguishes raw local genres, gameplay-enabled genres, and explicitly mapped Soundcharts genres. It does not mutate category relations.
 
 ## Import verified lifetime stream counts
 
