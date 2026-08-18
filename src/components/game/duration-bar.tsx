@@ -6,28 +6,39 @@ export function timelineProgress(progressMs: number): number {
   return Math.min(Math.max(progressMs, 0) / TIMELINE_MS, 1);
 }
 
+export function stageStateForAttempt(
+  stageIndex: number,
+  attempt: number,
+): "completed" | "current" | "future" {
+  if (stageIndex < attempt) return "completed";
+  if (stageIndex === attempt) return "current";
+  return "future";
+}
+
 export function DurationBar({ attempt, progressMs }: { attempt: number; progressMs: number }) {
-  const previous = [0, ...SNIPPET_LENGTHS.slice(0, -1)];
   const currentLength = SNIPPET_LENGTHS[attempt]!;
   const label = currentLength === 1 ? "1 second" : `${currentLength} seconds`;
   return (
     <div className="duration" aria-label={`${label} unlocked`}>
-      <div
-        className={`duration-label${attempt === 0 ? " is-start" : attempt === SNIPPET_LENGTHS.length - 1 ? " is-end" : ""}`}
-        style={{ left: `${(currentLength / 15) * 100}%` }}
-      >{label}</div>
-      <div className="duration-track" role="progressbar" aria-label="Snippet playback" aria-valuemin={0} aria-valuemax={TIMELINE_MS} aria-valuenow={Math.round(progressMs)}>
+      <ol className="stage-list" aria-label="Snippet stages">
         {SNIPPET_LENGTHS.map((length, index) => {
-          const width = ((length - (previous[index] ?? 0)) / 15) * 100;
-          const unlocked = index <= attempt;
+          const state = stageStateForAttempt(index, attempt);
           return (
-            <span className={`duration-segment${unlocked ? " is-unlocked" : ""}`} style={{ width: `${width}%` }} key={length}>
-            </span>
+            <li
+              className={`stage-marker stage-marker--${state}`}
+              aria-current={state === "current" ? "step" : undefined}
+              key={length}
+            >
+              <span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+              <strong>{length}s</strong>
+            </li>
           );
         })}
+      </ol>
+      <div className="duration-track" role="progressbar" aria-label="Snippet playback" aria-valuemin={0} aria-valuemax={TIMELINE_MS} aria-valuenow={Math.round(progressMs)}>
         <span className="duration-fill" style={{ transform: `scaleX(${timelineProgress(progressMs)})` }} />
       </div>
-      <div className="duration-scale"><span>0</span><span>15s</span></div>
+      <div className="duration-caption"><span>Playback</span><span>{currentLength}s / 15s</span></div>
     </div>
   );
 }

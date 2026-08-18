@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { timelineProgress } from "@/components/game/duration-bar";
+import { stageStateForAttempt, timelineProgress } from "@/components/game/duration-bar";
 import { attemptActionLabel } from "@/components/game/guess-search";
 
 describe("gameplay labels and progress", () => {
@@ -12,6 +12,12 @@ describe("gameplay labels and progress", () => {
     [15_000, 1],
   ])("maps %dms onto the fixed 15-second timeline", (progressMs, expected) => {
     expect(timelineProgress(progressMs)).toBeCloseTo(expected);
+  });
+
+  it("derives completed, current, and future stage presentation from the attempt", () => {
+    expect(Array.from({ length: 6 }, (_, index) => stageStateForAttempt(index, 2))).toEqual([
+      "completed", "completed", "current", "future", "future", "future",
+    ]);
   });
 
   it("says Skip for each of the first five attempts", () => {

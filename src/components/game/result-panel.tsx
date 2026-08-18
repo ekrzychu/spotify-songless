@@ -21,13 +21,19 @@ export function ResultPanel({ won, attempts, answer, onNext }: {
         aria-describedby="result-summary"
         onKeyDown={handleKeyDown}
       >
-        <span className={`result-status${won ? " is-win" : ""}`} aria-hidden="true">{won ? "✓" : "—"}</span>
-        <p className="result-eyebrow" id="result-summary">{won ? "You got it" : "Better luck next time"}</p>
+        <div className="result-artwork" aria-hidden="true">
+          <span className="result-record" />
+          <span className="result-sleeve-mark">S</span>
+        </div>
+        <p className="result-eyebrow" id="result-summary">It was...</p>
         <h2 id="result-title">{answer.title}</h2>
         <p className="result-artist">{answer.artistNames}</p>
-        {won && <p className="result-solved">Solved in {attempts} / 6</p>}
+        <p className="result-album">{answer.albumName}</p>
+        <p className={`result-outcome${won ? " is-win" : " is-loss"}`}>
+          {won ? `Solved in ${attempts} / 6` : "Not solved"}
+        </p>
         <dl className="result-meta">
-          <div><dt>Album</dt><dd>{answer.albumName}</dd></div>
+          <div><dt>Attempts</dt><dd>{attempts} / 6</dd></div>
           <div><dt>Streams</dt><dd>{answer.streamCount ? Number(answer.streamCount).toLocaleString() : "Unranked"}</dd></div>
         </dl>
         <a className="spotify-link" href={answer.spotifyUrl} target="_blank" rel="noreferrer">Open in Spotify <span aria-hidden="true">↗</span></a>

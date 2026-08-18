@@ -143,7 +143,7 @@ test("the real session overrides a stale auth callback and the query is cleaned"
   await expect(page.getByText("Attempt 1")).toBeVisible();
 });
 
-test("custom filters are dark, keyboard accessible, and only one opens", async ({ page }) => {
+test("category and exposed difficulty controls are dark and keyboard accessible", async ({ page }) => {
   await mockConnectedGame(page);
   await page.goto("/");
   await expect(page.getByText("Attempt 1")).toBeVisible();
@@ -168,12 +168,11 @@ test("custom filters are dark, keyboard accessible, and only one opens", async (
   await expect(confirmation).toBeHidden();
   await expect(category).toBeFocused();
 
-  await page.getByRole("button", { name: "Difficulty" }).click();
-  await expect(page.getByRole("listbox", { name: "Difficulty" })).toBeVisible();
-  await expect(listbox).toBeHidden();
-  await page.getByRole("option", { name: "Hard" }).click();
+  await expect(page.getByRole("button", { name: "Normal", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Hard", exact: true }).click();
   await page.getByRole("button", { name: "Start new song" }).click();
-  await expect(page.getByRole("button", { name: "Difficulty" })).toContainText("Hard");
+  await expect(page.getByRole("button", { name: "Hard", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(listbox).toBeHidden();
 });
 
 test("only active genres and decades remain selectable", async ({ page }) => {
@@ -270,15 +269,15 @@ test("development playback errors retain Spotify's exact message", async ({ page
   await expect(page.getByText("This track could not be played.")).toHaveCount(0);
 });
 
-test("Play and Pause keep the same compact button geometry", async ({ page }) => {
+test("Play and Pause keep the same prominent circular geometry", async ({ page }) => {
   const oneSecondRound = { ...activeRound(), attempt: 1, snippetLength: 1 };
   await mockConnectedGame(page, oneSecondRound, { initialRound: oneSecondRound });
   await page.goto("/");
   const play = page.getByRole("button", { name: "Play song snippet" });
   const playBox = await play.boundingBox();
   expect(playBox).not.toBeNull();
-  expect(playBox!.width).toBeGreaterThanOrEqual(54);
-  expect(playBox!.width).toBeLessThanOrEqual(56);
+  expect(playBox!.width).toBeGreaterThanOrEqual(90);
+  expect(playBox!.width).toBeLessThanOrEqual(106);
   expect(playBox!.height).toBe(playBox!.width);
 
   await play.click();
@@ -359,7 +358,9 @@ test("the sixth empty attempt says Give up but a selected song still says Submit
   await expect(page.getByRole("button", { name: "Submit" })).toBeVisible();
   await page.getByRole("button", { name: "Clear selected song" }).click();
   await page.getByRole("button", { name: "Give up" }).click();
-  await expect(page.getByRole("dialog", { name: "Test Song" })).toBeVisible();
+  const result = page.getByRole("dialog", { name: "Test Song" });
+  await expect(result).toBeVisible();
+  await expect(result.getByText("Not solved")).toBeVisible();
 });
 
 test("pool exhaustion has a dedicated state and leaves filters usable", async ({ page }) => {
@@ -377,10 +378,9 @@ test("pool exhaustion has a dedicated state and leaves filters usable", async ({
   await expect(page.getByText(/every available All Music · Normal track/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Difficulty" }).click();
-  await page.getByRole("option", { name: "Hard" }).click();
+  await page.getByRole("button", { name: "Hard", exact: true }).click();
   await expect(page.getByText("Attempt 1")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Difficulty" })).toContainText("Hard");
+  await expect(page.getByRole("button", { name: "Hard", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("result dialog owns focus and Next Song starts another round", async ({ page }) => {
@@ -389,6 +389,9 @@ test("result dialog owns focus and Next Song starts another round", async ({ pag
   await page.getByRole("button", { name: "Skip" }).click();
   const result = page.getByRole("dialog", { name: "Test Song" });
   await expect(result).toBeVisible();
+  await expect(result.locator(".result-artwork")).toBeVisible();
+  await expect(result.getByText("It was...")).toBeVisible();
+  await expect(result.getByText("Solved in 1 / 6")).toBeVisible();
   await expect(page.getByRole("button", { name: "Next Song" })).toBeFocused();
   await expect(page.locator("main")).toHaveAttribute("inert", "");
   await page.keyboard.press("Escape");
@@ -398,8 +401,8 @@ test("result dialog owns focus and Next Song starts another round", async ({ pag
   expect(state.roundRequests()).toBeGreaterThanOrEqual(2);
 });
 
-for (const width of [360, 375, 768, 1366, 1920]) {
-  test(`filters and playback controls remain balanced inside a ${width}px viewport`, async ({ page }) => {
+for (const width of [320, 390, 768, 1024, 1440, 1920]) {
+  test(`workspace hierarchy remains usable inside a ${width}px viewport`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await mockConnectedGame(page);
     await page.goto("/");
@@ -409,12 +412,31 @@ for (const width of [360, 375, 768, 1366, 1920]) {
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     const playBox = await page.getByRole("button", { name: "Play song snippet" }).boundingBox();
+    const searchBox = await page.getByRole("combobox", { name: "Search for a song" }).boundingBox();
+    const filtersBox = await page.locator(".filters").boundingBox();
+    const stagesBox = await page.locator(".stage-panel").boundingBox();
     const volumeBox = await page.locator(".volume-control").boundingBox();
     expect(playBox).not.toBeNull();
+    expect(searchBox).not.toBeNull();
+    expect(filtersBox).not.toBeNull();
+    expect(stagesBox).not.toBeNull();
     expect(volumeBox).not.toBeNull();
-    expect(playBox!.width).toBeGreaterThanOrEqual(54);
-    expect(playBox!.width).toBeLessThanOrEqual(56);
-    expect(Math.abs((playBox!.x + playBox!.width / 2) - (volumeBox!.x + volumeBox!.width / 2))).toBeLessThanOrEqual(1);
+    expect(playBox!.width).toBeGreaterThanOrEqual(90);
+    expect(playBox!.width).toBeLessThanOrEqual(106);
+    expect(playBox!.height).toBe(playBox!.width);
+    expect(playBox!.y + playBox!.height).toBeLessThan(900);
+    expect(searchBox!.y + searchBox!.height).toBeLessThan(900);
+    await expect(page.getByRole("button", { name: "Normal", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".stage-marker[aria-current='step']")).toContainText("0.1s");
+
+    if (width >= 901) {
+      expect(filtersBox!.x + filtersBox!.width).toBeLessThan(playBox!.x);
+      expect(playBox!.x + playBox!.width).toBeLessThan(stagesBox!.x);
+    } else {
+      expect(filtersBox!.y).toBeLessThan(stagesBox!.y);
+      expect(stagesBox!.y).toBeLessThan(playBox!.y);
+      expect(searchBox!.y).toBeLessThan(volumeBox!.y);
+    }
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);
   });

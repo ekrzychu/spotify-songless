@@ -182,6 +182,9 @@ export function GameShell() {
   };
 
   const modalOpen = Boolean((round?.finished && round.answer) || pendingFilters);
+  const currentCategory = getCategory(filters.category)?.label ?? filters.category;
+  const currentDifficulty = DIFFICULTY_LABELS[filters.difficulty];
+  const currentSnippetLength = round?.snippetLength ?? 0.1;
 
   return (
     <>
@@ -191,7 +194,7 @@ export function GameShell() {
         {connected && <button className="connection" type="button" onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => location.reload())}><span />Spotify</button>}
       </header>
 
-      <section className="game" aria-busy={loadingRound}>
+      <section className={`game${connected ? " game--connected" : ""}`} aria-busy={loadingRound}>
         <div className="game-heading">
           <p>Unlimited song guessing</p>
           <FilterBar category={filters.category} difficulty={filters.difficulty} disabled={!connected || loadingRound} onChange={requestFilters} />
@@ -224,18 +227,35 @@ export function GameShell() {
           </div>
         ) : (
           <>
-            <AttemptList attempts={round?.attempts ?? []} currentAttempt={round?.attempt ?? 0} finished={round?.finished ?? false} />
-            <DurationBar attempt={round?.attempt ?? 0} progressMs={player.progressMs} />
+            <section className="game-primary" aria-label="Song guessing controls">
+            <div className="game-context">
+              <span>Current set</span>
+              <strong>{currentCategory} <i aria-hidden="true" /> {currentDifficulty}</strong>
+            </div>
             <div className="play-area">
               <PlayButton playing={player.playing} disabled={!round || round.finished || !player.ready || loadingRound} onClick={play} />
+              <strong className="snippet-duration">{currentSnippetLength}s</strong>
               <p>{loadingRound ? "Choosing a song…" : player.status === "loading" ? "Preparing Spotify…" : player.status === "offline" ? "Player offline" : `Play ${round?.snippetLength ?? 0.1}s intro`}</p>
+            </div>
+            <GuessSearch disabled={!round || round.finished || loadingRound} busy={attemptBusy} finalAttempt={round?.attempt === MAX_ATTEMPTS - 1} onAttempt={(guess) => void attempt(guess)} />
+            <AttemptList attempts={round?.attempts ?? []} currentAttempt={round?.attempt ?? 0} finished={round?.finished ?? false} />
+            </section>
+            <section className="stage-panel" aria-labelledby="stages-heading">
+              <h2 className="rail-heading" id="stages-heading">Stages</h2>
+              <DurationBar attempt={round?.attempt ?? 0} progressMs={player.progressMs} />
+            </section>
+            <section className="volume-panel" aria-labelledby="volume-heading">
+              <h2 className="rail-heading" id="volume-heading">Volume</h2>
               <VolumeControl
                 value={player.volumePercent}
                 disabled={!player.ready}
                 onChange={(value) => void player.setVolume(value)}
               />
-            </div>
-            <GuessSearch disabled={!round || round.finished || loadingRound} busy={attemptBusy} finalAttempt={round?.attempt === MAX_ATTEMPTS - 1} onAttempt={(guess) => void attempt(guess)} />
+            </section>
+            <section className="shortcut-panel" aria-labelledby="shortcut-heading">
+              <h2 className="rail-heading" id="shortcut-heading">Shortcut</h2>
+              <p><kbd>Space</kbd><span>Play / pause</span></p>
+            </section>
           </>
         )}
 

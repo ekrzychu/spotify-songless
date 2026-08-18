@@ -14,41 +14,48 @@ export function FilterBar({
   disabled?: boolean;
   onChange: (filters: { category: string; difficulty: Difficulty }) => void;
 }) {
-  const [openMenu, setOpenMenu] = useState<"category" | "difficulty" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"category" | null>(null);
   const close = useCallback(() => setOpenMenu(null), []);
   const categoryGroups = useMemo<FilterGroup[]>(() => CATEGORY_GROUPS.map((group) => ({
     label: group.label,
     options: group.categories.map((item) => ({ value: item.id, label: item.label })),
   })), []);
-  const difficultyGroups = useMemo<FilterGroup[]>(() => [{
-    label: "Difficulty",
-    options: DIFFICULTIES.map((item) => ({ value: item, label: DIFFICULTY_LABELS[item] })),
-  }], []);
-
   return (
-    <div className="filters" aria-label="Game filters">
-      <FilterSelect
-        label="Category"
-        value={category}
-        groups={categoryGroups}
-        open={openMenu === "category"}
-        disabled={disabled}
-        onOpen={() => setOpenMenu("category")}
-        onClose={close}
-        onChange={(nextCategory) => onChange({ category: nextCategory, difficulty })}
-      />
-      <span className="filter-divider" aria-hidden="true" />
-      <FilterSelect
-        label="Difficulty"
-        value={difficulty}
-        groups={difficultyGroups}
-        open={openMenu === "difficulty"}
-        disabled={disabled}
-        menuAlign="end"
-        onOpen={() => setOpenMenu("difficulty")}
-        onClose={close}
-        onChange={(nextDifficulty) => onChange({ category, difficulty: nextDifficulty as Difficulty })}
-      />
-    </div>
+    <aside className="filters" aria-label="Game filters">
+      <section className="filter-section">
+        <h2 className="rail-heading">Category</h2>
+        <FilterSelect
+          label="Category"
+          value={category}
+          groups={categoryGroups}
+          open={openMenu === "category"}
+          disabled={disabled}
+          onOpen={() => setOpenMenu("category")}
+          onClose={close}
+          onChange={(nextCategory) => onChange({ category: nextCategory, difficulty })}
+        />
+      </section>
+      <section className="filter-section filter-section--difficulty">
+        <h2 className="rail-heading" id="difficulty-heading">Difficulty</h2>
+        <div className="difficulty-options" role="group" aria-labelledby="difficulty-heading">
+          {DIFFICULTIES.map((item) => (
+            <button
+              className="difficulty-option"
+              type="button"
+              aria-pressed={item === difficulty}
+              disabled={disabled}
+              key={item}
+              onClick={() => {
+                close();
+                if (item !== difficulty) onChange({ category, difficulty: item });
+              }}
+            >
+              <span>{DIFFICULTY_LABELS[item]}</span>
+              <i aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </section>
+    </aside>
   );
 }
