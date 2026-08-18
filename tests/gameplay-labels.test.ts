@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { stageStateForAttempt, timelineProgress } from "@/components/game/duration-bar";
+import { timelineProgress } from "@/components/game/duration-bar";
+import { stageStateForAttempt } from "@/components/game/stage-progress";
 import { attemptActionLabel } from "@/components/game/guess-search";
 
 describe("gameplay labels and progress", () => {

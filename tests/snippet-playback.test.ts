@@ -2,13 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FIRST_SNIPPET_TRANSPORT_MS,
   PAUSE_CONFIRM_INTERVAL_MS,
+  PAUSE_CONFIRM_TIMEOUT_MS,
+  PAUSE_STABILIZATION_MS,
   PLAYBACK_START_TIMEOUT_MS,
-  PRIME_SETTLE_MS,
   PlaybackStartTimeoutError,
   SnippetPlaybackController,
   logicalProgressForTransport,
   snippetTiming,
   spotifyPlaybackStartPayload,
+  spotifyPlaybackPausePayload,
   type SnippetPlayerState,
 } from "@/lib/spotify/snippet-playback";
 
@@ -25,6 +27,7 @@ describe("snippet playback synchronization", () => {
   let resume: ReturnType<typeof vi.fn>;
   let seek: ReturnType<typeof vi.fn>;
   let primeTrack: ReturnType<typeof vi.fn>;
+  let pauseRemotely: ReturnType<typeof vi.fn>;
   let playing: boolean[];
   let progress: number[];
   let stopErrors: string[];
@@ -49,6 +52,7 @@ describe("snippet playback synchronization", () => {
     pause = vi.fn(async () => delayedPublish((current) => ({ ...current, paused: true })));
     resume = vi.fn(async () => delayedPublish((current) => ({ ...current, paused: false })));
     seek = vi.fn(async (positionMs: number) => delayedPublish((current) => ({ ...current, position: positionMs })));
+    pauseRemotely = vi.fn(async () => undefined);
     controller = new SnippetPlaybackController({
       activateElement: vi.fn(async () => undefined),
       pause,
@@ -59,7 +63,7 @@ describe("snippet playback synchronization", () => {
       onPlaying: (value) => playing.push(value),
       onProgress: (value) => progress.push(value),
       onStopError: (value) => stopErrors.push(value),
-    }, () => Date.now());
+    }, () => Date.now(), { pauseRemotely });
     primeTrack = vi.fn(async (signal: AbortSignal) => {
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -94,7 +98,7 @@ describe("snippet playback synchronization", () => {
   }
 
   async function finishFirstSnippet(): Promise<void> {
-    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_INTERVAL_MS + OPERATION_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_INTERVAL_MS + OPERATION_DELAY_MS + PAUSE_STABILIZATION_MS);
   }
 
   it("maps the logical 100ms attempt onto a 350ms Spotify transport window", () => {
@@ -112,7 +116,7 @@ describe("snippet playback synchronization", () => {
 
   it("tolerates asynchronous remote, pause, seek, and resume state transitions", async () => {
     const started = requestPlay();
-    await advanceUntilPhase("waiting-for-uri");
+    await vi.advanceTimersByTimeAsync(REMOTE_DELAY_MS - 1);
     expect(controller.getDebugSnapshot().armedUri).toBeNull();
     await finishPreparation(started);
 
@@ -128,9 +132,13 @@ describe("snippet playback synchronization", () => {
     expect(playing.at(-1)).toBe(true);
   });
 
-  it("waits for the centralized prime settle period before pausing", async () => {
-    const started = requestPlay();
-    await vi.advanceTimersByTimeAsync(REMOTE_DELAY_MS + PRIME_SETTLE_MS - 1);
+  it("does not prime-pause a requested URI until Spotify confirms it is actually playing", async () => {
+    primeTrack = vi.fn(async () => {
+      publish({ paused: true, position: 0, track_window: { current_track: { uri: URI } } });
+      setTimeout(() => publish({ paused: false, position: 0, track_window: { current_track: { uri: URI } } }), 120);
+    });
+    const started = requestPlay(100, primeTrack);
+    await vi.advanceTimersByTimeAsync(119);
     expect(pause).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(pause).toHaveBeenCalledTimes(1);
@@ -187,14 +195,70 @@ describe("snippet playback synchronization", () => {
     expect(stopErrors).toEqual([]);
   });
 
+  it("does not report stopped when SDK pause resolves but Spotify still reports playing", async () => {
+    const started = requestPlay();
+    await finishPreparation(started);
+    pause.mockImplementation(async () => undefined);
+    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_INTERVAL_MS + 1);
+    expect(controller.getDebugSnapshot().phase).toBe("snippet-pausing");
+    expect(playing.at(-1)).toBe(true);
+    expect(stopErrors).toEqual([]);
+  });
+
+  it("uses the remote pause fallback and still waits for SDK confirmation", async () => {
+    const started = requestPlay();
+    await finishPreparation(started);
+    pause.mockImplementation(async () => undefined);
+    pauseRemotely.mockImplementation(async () => delayedPublish((current) => ({ ...current, paused: true })));
+    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_TIMEOUT_MS);
+    expect(pauseRemotely).toHaveBeenCalledTimes(1);
+    expect(stopErrors).toEqual([]);
+    expect(playing.at(-1)).toBe(false);
+    expect(controller.getDebugSnapshot().phase).toBe("armed");
+  });
+
+  it("catches a late start during prime-pause stabilization before seeking", async () => {
+    let primePauseCalls = 0;
+    pause.mockImplementation(async () => {
+      primePauseCalls += 1;
+      delayedPublish((current) => ({ ...current, paused: true }));
+      if (primePauseCalls === 1) {
+        setTimeout(() => {
+          if (state) publish({ ...state, paused: false });
+        }, OPERATION_DELAY_MS + 30);
+      }
+    });
+    const started = requestPlay();
+    await finishPreparation(started);
+    expect(primePauseCalls).toBe(2);
+    expect(seek).toHaveBeenCalledTimes(1);
+  });
+
+  it("coalesces rapid Play requests into one remote preparation", async () => {
+    const first = requestPlay();
+    const second = requestPlay();
+    await finishPreparation(first);
+    await second;
+    expect(primeTrack).toHaveBeenCalledTimes(1);
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
   it("bounds deadline pause retries and reports a genuine failure", async () => {
     const started = requestPlay();
     await finishPreparation(started);
     const pausesBeforeDeadline = pause.mock.calls.length;
     pause.mockImplementation(async () => undefined);
-    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + 500);
+    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_TIMEOUT_MS + 100);
     expect(pause).toHaveBeenCalledTimes(pausesBeforeDeadline + 3);
+    expect(pauseRemotely).toHaveBeenCalledTimes(1);
     expect(stopErrors).toHaveLength(1);
+    expect(playing.at(-1)).toBe(true);
+
+    pause.mockImplementation(async () => delayedPublish((current) => ({ ...current, paused: true })));
+    const retry = controller.stop(false);
+    await vi.advanceTimersByTimeAsync(PAUSE_CONFIRM_INTERVAL_MS + OPERATION_DELAY_MS + PAUSE_STABILIZATION_MS);
+    await expect(retry).resolves.toBe(true);
+    expect(playing.at(-1)).toBe(false);
   });
 
   it("a stale snippet stop cannot pause a newer run", async () => {
@@ -221,7 +285,6 @@ describe("snippet playback synchronization", () => {
   });
 
   it.each([
-    ["prime-pausing", "pausing"],
     ["prime-seeking", "seeking"],
     ["snippet-resuming", "resuming"],
   ] as const)("honors Spotify disallows.%s state restrictions", async (targetPhase, restriction) => {
@@ -300,9 +363,10 @@ describe("snippet playback synchronization", () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(progress.at(-1)).toBeGreaterThanOrEqual(300);
     const stopping = controller.stop(true);
-    await vi.advanceTimersByTimeAsync(PAUSE_CONFIRM_INTERVAL_MS + OPERATION_DELAY_MS);
-    await stopping;
+    await vi.advanceTimersByTimeAsync(PAUSE_CONFIRM_INTERVAL_MS + OPERATION_DELAY_MS + PAUSE_STABILIZATION_MS);
+    await expect(stopping).resolves.toBe(true);
     expect(progress.at(-1)).toBe(0);
+    expect(playing.at(-1)).toBe(false);
   });
 
   it("builds a position-zero request for the only remote load", () => {
@@ -311,5 +375,9 @@ describe("snippet playback synchronization", () => {
       spotifyUri: URI,
       positionMs: 0,
     });
+  });
+
+  it("builds a device-targeted remote pause request", () => {
+    expect(spotifyPlaybackPausePayload("device")).toEqual({ deviceId: "device" });
   });
 });

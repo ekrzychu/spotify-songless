@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AttemptList } from "@/components/game/attempt-list";
 import { DurationBar } from "@/components/game/duration-bar";
+import { StageProgress } from "@/components/game/stage-progress";
 import { FilterBar } from "@/components/game/filter-bar";
 import { GuessSearch } from "@/components/game/guess-search";
 import { PlayButton } from "@/components/game/play-button";
@@ -18,6 +19,7 @@ import { PlaybackRequestError, useSpotifyPlayer } from "@/hooks/use-spotify-play
 import { getCategory } from "@/lib/catalog/category-config";
 import { GAME_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 import { MAX_ATTEMPTS } from "@/lib/game/snippets";
+import { RESULT_REVEAL_DURATION_SECONDS, shouldStartResultPlayback } from "@/lib/game/result-playback";
 import type { GameDifficulty, RoundView, SearchTrack } from "@/types/game";
 
 type Filters = GameFilters;
@@ -31,18 +33,23 @@ export function GameShell() {
   const [loadingRound, setLoadingRound] = useState(false);
   const [attemptBusy, setAttemptBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [revealWarning, setRevealWarning] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<{ text: string; success: boolean } | null>(null);
   const [pendingFilters, setPendingFilters] = useState<Filters | null>(null);
   const [exhaustedPool, setExhaustedPool] = useState<Filters | null>(null);
   const [stats, setStats] = useState<LocalStats>(EMPTY_STATS);
+  const revealStartedRoundRef = useRef<string | null>(null);
   const connected = connection === "connected";
   const player = useSpotifyPlayer(connected);
   const resetPlayback = player.resetPlayback;
   const invalidatePlayerArm = player.invalidateArm;
 
   const newRound = useCallback(async (nextFilters: Filters) => {
-    setLoadingRound(true); setNotice(null); setExhaustedPool(null); await resetPlayback();
+    setLoadingRound(true); setNotice(null); setRevealWarning(null); setExhaustedPool(null);
+    let playbackStopped = false;
     try {
+      if (!await resetPlayback()) throw new Error("Spotify playback could not be stopped. Press Pause and try again.");
+      playbackStopped = true;
       const response = await fetch("/api/game/round", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nextFilters),
       });
@@ -57,7 +64,10 @@ export function GameShell() {
       setRound(payload);
       localStorage.setItem(STORAGE_KEYS.round, JSON.stringify({ id: payload.id, ...nextFilters }));
     } catch (error) {
-      setRound(null); setNotice(error instanceof Error ? error.message : "A song could not be loaded");
+      const message = error instanceof Error ? error.message : "A song could not be loaded";
+      if (playbackStopped) setRound(null);
+      else setRevealWarning(message);
+      setNotice(message);
     } finally { setLoadingRound(false); }
   }, [resetPlayback]);
 
@@ -125,12 +135,15 @@ export function GameShell() {
   }, [invalidatePlayerArm, round?.spotifyUri]);
 
   const play = useCallback(() => {
-    if (!round || round.finished || loadingRound) return;
+    if (!round || round.finished || loadingRound || player.busy) return;
     if (player.playing) void player.pause();
     else void player.playSnippet(round.spotifyUri, round.snippetLength).catch((error: unknown) => {
       if (error instanceof PlaybackRequestError && error.code === "track_unavailable") {
         setNotice("That track is unavailable here. Choosing another…");
-        void player.resetPlayback().then(() => fetch(`/api/game/round/${round.id}/unavailable`, { method: "POST" }))
+        void player.resetPlayback().then((stopped) => {
+          if (!stopped) throw new Error("Spotify playback could not be stopped. Press Pause and try again.");
+          return fetch(`/api/game/round/${round.id}/unavailable`, { method: "POST" });
+        })
           .then(async (response) => {
             const payload = await response.json() as RoundView & { error?: string; code?: string };
             if (response.status === 409 && payload.code === "pool_exhausted") {
@@ -158,15 +171,25 @@ export function GameShell() {
 
   const attempt = async (guess: SearchTrack | null) => {
     if (!round || round.finished || attemptBusy) return;
-    setAttemptBusy(true); setNotice(null); await player.resetPlayback();
+    setAttemptBusy(true); setNotice(null); setRevealWarning(null);
     try {
+      if (!await player.resetPlayback()) throw new Error("Spotify playback could not be stopped. Press Pause and try again.");
       const response = await fetch(`/api/game/round/${round.id}/attempt`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ guessTrackId: guess?.spotifyTrackId ?? null }),
       });
       const payload = await response.json() as RoundView & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "The attempt was not recorded");
+      const shouldStartReveal = shouldStartResultPlayback(round, payload, revealStartedRoundRef.current);
       setRound(payload);
+      if (shouldStartReveal) {
+        revealStartedRoundRef.current = payload.id;
+        void player.playSnippet(payload.spotifyUri, RESULT_REVEAL_DURATION_SECONDS).catch((playbackError: unknown) => {
+          setRevealWarning(playbackError instanceof Error
+            ? `Answer playback unavailable: ${playbackError.message}`
+            : "Answer playback is unavailable.");
+        });
+      }
     } catch (error) { setNotice(error instanceof Error ? error.message : "The attempt was not recorded"); }
     finally { setAttemptBusy(false); }
   };
@@ -185,16 +208,25 @@ export function GameShell() {
   const currentCategory = getCategory(filters.category)?.label ?? filters.category;
   const currentDifficulty = GAME_DIFFICULTY_LABELS[filters.difficulty];
   const currentSnippetLength = round?.snippetLength ?? 0.1;
+  const playbackStatus = loadingRound
+    ? "Choosing a song..."
+    : player.busy
+      ? player.phase === "snippet-pausing" ? "Stopping Spotify..." : "Preparing Spotify..."
+      : player.status === "loading"
+        ? "Preparing Spotify..."
+        : player.status === "offline"
+          ? "Player offline"
+          : `Play ${round?.snippetLength ?? 0.1}s intro`;
 
   return (
-    <>
+    <div className="app-theme" data-difficulty={filters.difficulty}>
     <main className="game-shell" inert={modalOpen || undefined}>
       <header className="site-header">
         <div><span className="wordmark-mark" aria-hidden="true" /><h1>spodle</h1></div>
         {connected && <button className="connection" type="button" onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => location.reload())}><span />Spotify</button>}
       </header>
 
-      <section className={`game${connected ? " game--connected" : ""}`} aria-busy={loadingRound}>
+      <section className={`game${connected ? " game--connected" : ""}`} aria-busy={loadingRound || player.busy}>
         <div className="game-heading">
           <p>Unlimited song guessing</p>
           <FilterBar category={filters.category} difficulty={filters.difficulty} disabled={!connected || loadingRound} onChange={requestFilters} />
@@ -233,16 +265,17 @@ export function GameShell() {
               <strong>{currentCategory} <i aria-hidden="true" /> {currentDifficulty}</strong>
             </div>
             <div className="play-area">
-              <PlayButton playing={player.playing} disabled={!round || round.finished || !player.ready || loadingRound} onClick={play} />
+              <PlayButton playing={player.playing} disabled={!round || round.finished || !player.ready || loadingRound || player.busy} onClick={play} />
               <strong className="snippet-duration">{currentSnippetLength}s</strong>
-              <p>{loadingRound ? "Choosing a song…" : player.status === "loading" ? "Preparing Spotify…" : player.status === "offline" ? "Player offline" : `Play ${round?.snippetLength ?? 0.1}s intro`}</p>
+              <p>{playbackStatus}</p>
             </div>
+            <DurationBar attempt={round?.attempt ?? 0} progressMs={player.progressMs} />
             <GuessSearch disabled={!round || round.finished || loadingRound} busy={attemptBusy} finalAttempt={round?.attempt === MAX_ATTEMPTS - 1} onAttempt={(guess) => void attempt(guess)} />
             <AttemptList attempts={round?.attempts ?? []} currentAttempt={round?.attempt ?? 0} finished={round?.finished ?? false} />
             </section>
             <section className="stage-panel" aria-labelledby="stages-heading">
               <h2 className="rail-heading" id="stages-heading">Stages</h2>
-              <DurationBar attempt={round?.attempt ?? 0} progressMs={player.progressMs} />
+              <StageProgress attempt={round?.attempt ?? 0} />
             </section>
             <section className="volume-panel" aria-labelledby="volume-heading">
               <h2 className="rail-heading" id="volume-heading">Volume</h2>
@@ -268,8 +301,8 @@ export function GameShell() {
       <footer><span>Six chances. No daily limit.</span><span>Space to play</span></footer>
 
     </main>
-    {round?.finished && round.answer && <ResultPanel won={round.won} attempts={round.attempts.length} answer={round.answer} onNext={() => void newRound(filters)} />}
+    {round?.finished && round.answer && <ResultPanel won={round.won} attempts={round.attempts.length} answer={round.answer} playbackWarning={revealWarning} onNext={() => void newRound(filters)} />}
     {pendingFilters && <ConfirmDialog onCancel={() => setPendingFilters(null)} onConfirm={() => applyFilters(pendingFilters)} />}
-    </>
+    </div>
   );
 }

@@ -108,6 +108,7 @@ async function mockConnectedGame(
   roundRequests: () => number;
   roundBodies: () => Array<{ category: string; difficulty: string }>;
   playbackBodies: () => Array<{ positionMs: number; spotifyUri: string }>;
+  pauseBodies: () => Array<{ deviceId: string }>;
 }> {
   await page.addInitScript(() => localStorage.clear());
   await page.route("**/api/auth/status", (route) => route.fulfill({ json: { connected: true } }));
@@ -115,10 +116,11 @@ async function mockConnectedGame(
   let roundRequests = 0;
   const roundBodies: Array<{ category: string; difficulty: string }> = [];
   const playbackBodies: Array<{ positionMs: number; spotifyUri: string }> = [];
+  const pauseBodies: Array<{ deviceId: string }> = [];
   await page.route("**/api/game/round", (route) => {
     roundRequests += 1;
     roundBodies.push(route.request().postDataJSON() as { category: string; difficulty: string });
-    return route.fulfill({ json: options.initialRound ?? activeRound(`round-${roundRequests}`) });
+    return route.fulfill({ json: options.initialRound ?? activeRound(roundRequests === 1 ? "round-one" : `round-${roundRequests}`) });
   });
   await page.route("**/api/game/round/*/attempt", (route) => route.fulfill({ json: attemptResponse }));
   await page.route("**/api/spotify/playback", async (route) => {
@@ -129,7 +131,21 @@ async function mockConnectedGame(
     }
     await route.fulfill({ json: { ok: true } });
   });
-  return { roundRequests: () => roundRequests, roundBodies: () => roundBodies, playbackBodies: () => playbackBodies };
+  await page.route("**/api/spotify/playback/pause", async (route) => {
+    pauseBodies.push(route.request().postDataJSON() as { deviceId: string });
+    await page.evaluate(() => {
+      const sdk = (window as unknown as { __spodleSdkTest: { player: { state: { paused: boolean }; listeners: Record<string, (state: unknown) => void> } } }).__spodleSdkTest;
+      sdk.player.state = { ...sdk.player.state, paused: true };
+      sdk.player.listeners.player_state_changed?.(sdk.player.state);
+    });
+    await route.fulfill({ status: 204, body: "" });
+  });
+  return {
+    roundRequests: () => roundRequests,
+    roundBodies: () => roundBodies,
+    playbackBodies: () => playbackBodies,
+    pauseBodies: () => pauseBodies,
+  };
 }
 
 test("page hydrates and the connection check resolves to Connect Spotify", async ({ page }) => {
@@ -184,6 +200,30 @@ test("category and exposed difficulty controls are dark and keyboard accessible"
   await expect(page.getByRole("button", { name: "Unranked", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => state.roundBodies().at(-1)?.difficulty).toBe("unranked");
   await expect(listbox).toBeHidden();
+});
+
+test("ranked difficulties apply their centralized gameplay accent themes", async ({ page }) => {
+  await mockConnectedGame(page);
+  await page.goto("/");
+  await expect(page.getByText("Attempt 1")).toBeVisible();
+
+  for (const [difficulty, accent] of [
+    ["Easy", "#a9dc63"],
+    ["Normal", "#f1c75b"],
+    ["Hard", "#ef9446"],
+    ["Extreme", "#eb6965"],
+    ["Impossible", "#b88cf2"],
+  ] as const) {
+    const button = page.getByRole("button", { name: difficulty, exact: true });
+    if (await button.getAttribute("aria-pressed") !== "true") {
+      await button.click();
+      await page.getByRole("button", { name: "Start new song" }).click();
+    }
+    await expect(page.locator(".app-theme")).toHaveAttribute("data-difficulty", difficulty.toLowerCase());
+    await expect.poll(() => page.locator(".app-theme").evaluate((element) => (
+      getComputedStyle(element).getPropertyValue("--game-accent").trim()
+    ))).toBe(accent);
+  }
 });
 
 test("only active genres and decades remain selectable", async ({ page }) => {
@@ -287,8 +327,8 @@ test("Play and Pause keep the same prominent circular geometry", async ({ page }
   const play = page.getByRole("button", { name: "Play song snippet" });
   const playBox = await play.boundingBox();
   expect(playBox).not.toBeNull();
-  expect(playBox!.width).toBeGreaterThanOrEqual(90);
-  expect(playBox!.width).toBeLessThanOrEqual(106);
+  expect(playBox!.width).toBeGreaterThanOrEqual(118);
+  expect(playBox!.width).toBeLessThanOrEqual(130);
   expect(playBox!.height).toBe(playBox!.width);
 
   await play.click();
@@ -298,6 +338,19 @@ test("Play and Pause keep the same prominent circular geometry", async ({ page }
   expect(pauseBox).not.toBeNull();
   expect(pauseBox!.width).toBe(playBox!.width);
   expect(pauseBox!.height).toBe(playBox!.height);
+});
+
+test("rapid double Play sends only one initial remote start request", async ({ page }) => {
+  const state = await mockConnectedGame(page);
+  await page.goto("/");
+  const play = page.getByRole("button", { name: "Play song snippet" });
+  await play.evaluate((element) => {
+    (element as HTMLButtonElement).click();
+    (element as HTMLButtonElement).click();
+  });
+  await expect.poll(() => state.playbackBodies().length).toBe(1);
+  await page.waitForTimeout(250);
+  expect(state.playbackBodies()).toHaveLength(1);
 });
 
 test("Skip advances an attempt", async ({ page }) => {
@@ -357,7 +410,7 @@ test("the sixth empty attempt says Give up but a selected song still says Submit
     won: false,
     attempts: Array.from({ length: 6 }, (_, index) => ({ number: index + 1, outcome: "skipped" as const, label: "Skipped" })),
   };
-  await mockConnectedGame(page, gaveUp, { initialRound: finalAttempt });
+  const state = await mockConnectedGame(page, gaveUp, { initialRound: finalAttempt });
   await page.route("**/api/spotify/search?*", (route) => route.fulfill({ json: { items: [{
     spotifyTrackId: "1111111111111111111111", isrc: null, title: "Candidate", artistNames: "Test Artist", albumName: "Album",
   }] } }));
@@ -372,6 +425,58 @@ test("the sixth empty attempt says Give up but a selected song still says Submit
   const result = page.getByRole("dialog", { name: "Test Song" });
   await expect(result).toBeVisible();
   await expect(result.getByText("Not solved")).toBeVisible();
+  await expect.poll(() => state.playbackBodies().length).toBe(1);
+  expect(state.playbackBodies()[0]).toMatchObject({ positionMs: 0, spotifyUri: finishedRound.spotifyUri });
+});
+
+test("a correct guess triggers one 15-second answer playback from zero", async ({ page }) => {
+  const state = await mockConnectedGame(page, finishedRound);
+  await page.route("**/api/spotify/search?*", (route) => route.fulfill({ json: { items: [{
+    spotifyTrackId: "0123456789012345678901", isrc: null, title: "Test Song", artistNames: "Test Artist", albumName: "Test Album",
+  }] } }));
+  await page.goto("/");
+  await page.getByRole("combobox", { name: "Search for a song" }).fill("Test Song");
+  await page.getByRole("option", { name: /Test Song/ }).click();
+  await page.getByRole("button", { name: "Submit" }).click();
+  await expect(page.getByRole("dialog", { name: "Test Song" })).toBeVisible();
+  await expect.poll(() => state.playbackBodies().length).toBe(1);
+  expect(state.playbackBodies()[0]).toMatchObject({ positionMs: 0, spotifyUri: finishedRound.spotifyUri });
+});
+
+test("an ordinary wrong attempt does not trigger answer playback", async ({ page }) => {
+  const wrongRound: RoundView = {
+    ...activeRound(), attempt: 1, snippetLength: 1,
+    attempts: [{ number: 1, outcome: "incorrect", label: "Wrong Song — Wrong Artist" }],
+  };
+  const state = await mockConnectedGame(page, wrongRound);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByText("Attempt 2")).toBeVisible();
+  expect(state.playbackBodies()).toEqual([]);
+});
+
+test("a final incorrect submission triggers one answer playback", async ({ page }) => {
+  const finalAttempt = { ...activeRound(), attempt: 5, snippetLength: 15 };
+  const lostRound: RoundView = {
+    ...finishedRound,
+    attempt: 5,
+    won: false,
+    attempts: Array.from({ length: 6 }, (_, index) => ({
+      number: index + 1,
+      outcome: index === 5 ? "incorrect" as const : "skipped" as const,
+      label: index === 5 ? "Wrong Song — Wrong Artist" : "Skipped",
+    })),
+  };
+  const state = await mockConnectedGame(page, lostRound, { initialRound: finalAttempt });
+  await page.route("**/api/spotify/search?*", (route) => route.fulfill({ json: { items: [{
+    spotifyTrackId: "1111111111111111111111", isrc: null, title: "Wrong Song", artistNames: "Wrong Artist", albumName: "Album",
+  }] } }));
+  await page.goto("/");
+  await page.getByRole("combobox", { name: "Search for a song" }).fill("Wrong Song");
+  await page.getByRole("option", { name: /Wrong Song/ }).click();
+  await page.getByRole("button", { name: "Submit" }).click();
+  await expect(page.getByRole("dialog", { name: "Test Song" })).toBeVisible();
+  await expect.poll(() => state.playbackBodies().length).toBe(1);
 });
 
 test("pool exhaustion has a dedicated state and leaves filters usable", async ({ page }) => {
@@ -403,13 +508,29 @@ test("result dialog owns focus and Next Song starts another round", async ({ pag
   await expect(result.locator(".result-artwork")).toBeVisible();
   await expect(result.getByText("It was...")).toBeVisible();
   await expect(result.getByText("Solved in 1 / 6")).toBeVisible();
+  await expect.poll(() => state.playbackBodies().length).toBe(1);
   await expect(page.getByRole("button", { name: "Next Song" })).toBeFocused();
   await expect(page.locator("main")).toHaveAttribute("inert", "");
   await page.keyboard.press("Escape");
   await expect(result).toBeVisible();
   await page.getByRole("button", { name: "Next Song" }).click();
   await expect(result).toBeHidden();
+  await expect.poll(() => page.evaluate(() => (
+    window as unknown as { __spodleSdkTest: { player: { state: { paused: boolean } } } }
+  ).__spodleSdkTest.player.state.paused)).toBe(true);
   expect(state.roundRequests()).toBeGreaterThanOrEqual(2);
+});
+
+test("restoring a previously finished round does not autoplay its answer", async ({ page }) => {
+  const state = await mockConnectedGame(page);
+  await page.addInitScript(() => localStorage.setItem("spodle:round", JSON.stringify({
+    id: "round-one", category: "all", difficulty: "normal",
+  })));
+  await page.route("**/api/game/round/round-one", (route) => route.fulfill({ json: finishedRound }));
+  await page.goto("/");
+  await expect(page.getByRole("dialog", { name: "Test Song" })).toBeVisible();
+  await page.waitForTimeout(250);
+  expect(state.playbackBodies()).toEqual([]);
 });
 
 test("an Unranked result labels missing stream data without displaying zero", async ({ page }) => {
@@ -424,7 +545,8 @@ test("an Unranked result labels missing stream data without displaying zero", as
 
 for (const width of [320, 390, 768, 1024, 1440, 1920]) {
   test(`workspace hierarchy remains usable inside a ${width}px viewport`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 900 });
+    const height = width === 1920 ? 1080 : 900;
+    await page.setViewportSize({ width, height });
     await mockConnectedGame(page);
     await page.goto("/");
     await page.getByRole("button", { name: "Category" }).click();
@@ -433,20 +555,26 @@ for (const width of [320, 390, 768, 1024, 1440, 1920]) {
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(width);
     const playBox = await page.getByRole("button", { name: "Play song snippet" }).boundingBox();
+    const timelineBox = await page.getByRole("progressbar", { name: "Snippet playback" }).boundingBox();
     const searchBox = await page.getByRole("combobox", { name: "Search for a song" }).boundingBox();
     const filtersBox = await page.locator(".filters").boundingBox();
     const stagesBox = await page.locator(".stage-panel").boundingBox();
     const volumeBox = await page.locator(".volume-control").boundingBox();
+    const shellBox = await page.locator(".game-shell").boundingBox();
     expect(playBox).not.toBeNull();
+    expect(timelineBox).not.toBeNull();
     expect(searchBox).not.toBeNull();
     expect(filtersBox).not.toBeNull();
     expect(stagesBox).not.toBeNull();
     expect(volumeBox).not.toBeNull();
-    expect(playBox!.width).toBeGreaterThanOrEqual(90);
-    expect(playBox!.width).toBeLessThanOrEqual(106);
+    expect(shellBox).not.toBeNull();
+    const expectedPlaySize = width <= 600 ? 92 : 124;
+    expect(playBox!.width).toBeGreaterThanOrEqual(expectedPlaySize - 2);
+    expect(playBox!.width).toBeLessThanOrEqual(expectedPlaySize + 2);
     expect(playBox!.height).toBe(playBox!.width);
-    expect(playBox!.y + playBox!.height).toBeLessThan(900);
-    expect(searchBox!.y + searchBox!.height).toBeLessThan(900);
+    expect(playBox!.y + playBox!.height).toBeLessThan(height);
+    expect(timelineBox!.y).toBeLessThan(searchBox!.y);
+    expect(searchBox!.y + searchBox!.height).toBeLessThan(height);
     await expect(page.getByRole("button", { name: "Normal", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator(".stage-marker[aria-current='step']")).toContainText("0.1s");
 
@@ -458,6 +586,7 @@ for (const width of [320, 390, 768, 1024, 1440, 1920]) {
       expect(stagesBox!.y).toBeLessThan(playBox!.y);
       expect(searchBox!.y).toBeLessThan(volumeBox!.y);
     }
+    if (width === 1920) expect(shellBox!.width).toBeGreaterThanOrEqual(1400);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(0);
   });

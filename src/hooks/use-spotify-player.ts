@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { persistVolumePercent, readStoredVolumePercent } from "@/lib/client/volume";
-import { SnippetPlaybackController, spotifyPlaybackStartPayload } from "@/lib/spotify/snippet-playback";
+import {
+  SnippetPlaybackController,
+  isPlaybackBusyPhase,
+  spotifyPlaybackPausePayload,
+  spotifyPlaybackStartPayload,
+  type PlaybackPhase,
+} from "@/lib/spotify/snippet-playback";
 
 type PlayerStatus = "loading" | "ready" | "offline" | "error";
 
@@ -16,23 +22,27 @@ export class PlaybackRequestError extends Error {
 export function useSpotifyPlayer(enabled: boolean) {
   const playerRef = useRef<SpotifyPlayer | null>(null);
   const controllerRef = useRef<SnippetPlaybackController | null>(null);
+  const deviceIdRef = useRef<string | null>(null);
   const [status, setStatus] = useState<PlayerStatus>(enabled ? "loading" : "offline");
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [phase, setPhase] = useState<PlaybackPhase>("idle");
   const [progressMs, setProgressMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [volumePercent, setVolumePercent] = useState(65);
 
   const pause = useCallback(async () => {
-    if (controllerRef.current) await controllerRef.current.stop(false);
-    else await playerRef.current?.pause();
+    if (controllerRef.current) return controllerRef.current.stop(false);
+    await playerRef.current?.pause();
+    return true;
   }, []);
 
   const resetPlayback = useCallback(async () => {
-    if (controllerRef.current) await controllerRef.current.stop(true);
+    if (controllerRef.current) return controllerRef.current.stop(true);
     else {
       setProgressMs(0);
       await playerRef.current?.pause();
+      return true;
     }
   }, []);
 
@@ -76,15 +86,32 @@ export function useSpotifyPlayer(enabled: boolean) {
       const controller = new SnippetPlaybackController(player, {
         onPlaying: setPlaying,
         onProgress: setProgressMs,
+        onPhase: setPhase,
         onStopError: setError,
+      }, undefined, {
+        pauseRemotely: async () => {
+          const currentDeviceId = deviceIdRef.current;
+          if (!currentDeviceId) throw new Error("Spotify playback device is unavailable.");
+          const response = await fetch("/api/spotify/playback/pause", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(spotifyPlaybackPausePayload(currentDeviceId)),
+          });
+          if (!response.ok) {
+            const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
+            throw new PlaybackRequestError(payload?.code ?? "playback_failed", payload?.error ?? "Playback could not be paused");
+          }
+        },
       });
       controllerRef.current = controller;
       player.addListener("ready", ({ device_id }) => {
+        deviceIdRef.current = device_id;
         setDeviceId(device_id); setStatus("ready"); setError(null);
       });
       player.addListener("not_ready", () => {
         controller.invalidateArm();
         void controller.stop(false);
+        deviceIdRef.current = null;
         setStatus("offline"); setDeviceId(null);
       });
       player.addListener("player_state_changed", (state) => controller.handleState(state));
@@ -130,6 +157,7 @@ export function useSpotifyPlayer(enabled: boolean) {
       const controller = controllerRef.current;
       controllerRef.current = null;
       playerRef.current = null;
+      deviceIdRef.current = null;
       if (controller && player) void controller.stop(false).finally(() => player.disconnect());
       else player?.disconnect();
     };
@@ -158,6 +186,8 @@ export function useSpotifyPlayer(enabled: boolean) {
   return {
     status,
     playing,
+    phase,
+    busy: isPlaybackBusyPhase(phase),
     progressMs,
     volumePercent,
     error,

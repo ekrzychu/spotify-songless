@@ -1,10 +1,10 @@
 export const PLAYBACK_START_TIMEOUT_MS = 5_000;
 export const PLAYBACK_STATE_POLL_MS = 25;
 export const FIRST_SNIPPET_TRANSPORT_MS = 350;
-export const PRIME_SETTLE_MS = 100;
 export const PAUSE_CONFIRM_INTERVAL_MS = 40;
 export const PAUSE_CONFIRM_MAX_ATTEMPTS = 3;
 export const PAUSE_CONFIRM_TIMEOUT_MS = 1_000;
+export const PAUSE_STABILIZATION_MS = 100;
 export const ARMED_POSITION_TOLERANCE_MS = 100;
 
 const FIRST_SNIPPET_LOGICAL_MS = 100;
@@ -31,7 +31,11 @@ export function spotifyPlaybackStartPayload(deviceId: string, spotifyUri: string
   return { deviceId, spotifyUri, positionMs: 0 } as const;
 }
 
-type PlaybackPhase =
+export function spotifyPlaybackPausePayload(deviceId: string) {
+  return { deviceId } as const;
+}
+
+export type PlaybackPhase =
   | "idle"
   | "activating"
   | "remote-loading"
@@ -44,6 +48,10 @@ type PlaybackPhase =
   | "snippet-playing"
   | "snippet-pausing"
   | "failed";
+
+export function isPlaybackBusyPhase(phase: PlaybackPhase): boolean {
+  return !["idle", "armed", "snippet-playing", "failed"].includes(phase);
+}
 
 export type SnippetPlayerDisallows = {
   pausing?: boolean;
@@ -92,7 +100,12 @@ export type SnippetPlayRequest = {
 type PlaybackCallbacks = {
   onPlaying: (playing: boolean) => void;
   onProgress: (progressMs: number) => void;
+  onPhase?: (phase: PlaybackPhase) => void;
   onStopError?: (message: string) => void;
+};
+
+type PlaybackDependencies = {
+  pauseRemotely?: () => Promise<void>;
 };
 
 type StateWaiter = {
@@ -103,6 +116,8 @@ type StateWaiter = {
 };
 
 class PlaybackCancelledError extends Error {}
+
+class PlaybackStopUnconfirmedError extends Error {}
 
 export class PlaybackStartTimeoutError extends Error {
   constructor() {
@@ -135,15 +150,18 @@ export class SnippetPlaybackController {
   private commandTail: Promise<void> = Promise.resolve();
   private primeAbort: AbortController | null = null;
   private preparingTrack: { generation: number; spotifyUri: string } | null = null;
+  private stopPromise: Promise<boolean> | null = null;
   private debugStartedAt = 0;
 
   constructor(
     private readonly player: SnippetPlayer,
     private readonly callbacks: PlaybackCallbacks,
     private readonly now: () => number = () => performance.now(),
+    private readonly dependencies: PlaybackDependencies = {},
   ) {}
 
   async play(request: SnippetPlayRequest): Promise<void> {
+    if (this.preparingTrack || this.active || this.stopPromise) return;
     const generation = ++this.generation;
     this.clearRun();
     this.callbacks.onProgress(0);
@@ -163,7 +181,8 @@ export class SnippetPlaybackController {
       await command;
     } catch (error) {
       if (generation !== this.generation || error instanceof PlaybackCancelledError) return;
-      this.failFromOperation(error);
+      if (error instanceof PlaybackStopUnconfirmedError) this.failFromUnconfirmedStop(error);
+      else this.failFromOperation(error);
       throw error;
     } finally {
       if (this.preparingTrack?.generation === generation) this.preparingTrack = null;
@@ -210,36 +229,62 @@ export class SnippetPlaybackController {
     this.preparingTrack = null;
     this.armedSpotifyUri = null;
     this.lastSdkError = message;
-    this.phase = "failed";
+    this.setPhase("failed", "SDK playback failure", this.requestedSpotifyUri ?? "unknown", undefined, message);
     this.callbacks.onPlaying(false);
     return failure;
   }
 
   invalidateArm(): void {
     this.armedSpotifyUri = null;
-    if (this.phase === "armed") this.phase = "idle";
+    if (this.phase === "armed") this.setPhase("idle", "arm invalidated", this.requestedSpotifyUri ?? "unknown");
   }
 
-  async stop(resetProgress = false): Promise<void> {
-    const spotifyUri = this.active?.spotifyUri ?? this.preparingTrack?.spotifyUri ?? this.armedSpotifyUri;
+  stop(resetProgress = false): Promise<boolean> {
+    if (this.stopPromise) return this.stopPromise;
+    const operation = this.stopInternal(resetProgress);
+    this.stopPromise = operation;
+    void operation.finally(() => {
+      if (this.stopPromise === operation) this.stopPromise = null;
+    });
+    return operation;
+  }
+
+  private async stopInternal(resetProgress: boolean): Promise<boolean> {
+    const spotifyUri = this.active?.spotifyUri
+      ?? this.preparingTrack?.spotifyUri
+      ?? this.armedSpotifyUri
+      ?? this.requestedSpotifyUri;
     const generation = ++this.generation;
     this.clearRun();
     this.preparingTrack = null;
-    this.callbacks.onPlaying(false);
     if (resetProgress) this.callbacks.onProgress(0);
     if (!spotifyUri) {
-      this.phase = "idle";
-      return;
+      this.callbacks.onPlaying(false);
+      this.setPhase("idle", "stop completed without an active track", "unknown");
+      return true;
     }
     this.setPhase("snippet-pausing", "manual pause requested", spotifyUri);
     try {
       const result = await this.pauseAndConfirm(generation, spotifyUri, "manual pause");
-      if (generation !== this.generation) return;
-      this.phase = result === "confirmed" && this.armedSpotifyUri === spotifyUri ? "armed" : "idle";
+      if (generation !== this.generation) return false;
+      if (result === "confirmed") {
+        this.callbacks.onPlaying(false);
+        this.setPhase(this.armedSpotifyUri === spotifyUri ? "armed" : "idle", "manual pause confirmed", spotifyUri);
+        return true;
+      }
+      if (result === "cancelled") return false;
+      this.armedSpotifyUri = null;
+      this.callbacks.onPlaying(true);
+      this.setPhase("failed", "manual pause was not confirmed", spotifyUri);
+      this.callbacks.onStopError?.("Spotify did not confirm that playback stopped. Press Pause and try again.");
+      return false;
     } catch (error) {
-      if (generation !== this.generation) return;
-      this.failFromOperation(error);
+      if (generation !== this.generation) return false;
+      this.armedSpotifyUri = null;
+      this.callbacks.onPlaying(true);
+      this.setPhase("failed", "manual pause failed", spotifyUri, undefined, this.errorMessage(error));
       this.callbacks.onStopError?.(this.errorMessage(error));
+      return false;
     }
   }
 
@@ -256,7 +301,7 @@ export class SnippetPlaybackController {
       this.debug("armed URI reused", request.spotifyUri, currentState);
       this.setPhase("snippet-pausing", "replay pause requested", request.spotifyUri, currentState);
       const pauseResult = await this.pauseAndConfirm(generation, request.spotifyUri, "replay pause");
-      if (pauseResult === "failed") throw new Error("Spotify did not confirm that replay playback stopped.");
+      if (pauseResult === "failed") throw new PlaybackStopUnconfirmedError("Spotify did not confirm that replay playback stopped.");
       this.ensureGeneration(generation);
       this.setPhase("snippet-seeking", "seek 0 requested", request.spotifyUri);
       preparedState = await this.seekAndConfirmZero(generation, request.spotifyUri);
@@ -289,21 +334,17 @@ export class SnippetPlaybackController {
         throw new PlaybackStartTimeoutError();
       }
       this.ensureGeneration(generation);
-      this.setPhase("waiting-for-uri", "waiting for requested URI", request.spotifyUri);
+      this.setPhase("waiting-for-uri", "waiting for requested URI to play", request.spotifyUri);
       const currentState = await this.waitForState(
         generation,
-        (state): state is SnippetPlayerState => this.isCurrentUri(state, request.spotifyUri),
+        (state): state is SnippetPlayerState => this.isRequestedTrackPlaying(state, request.spotifyUri),
         deadline,
       );
-      this.debug("requested URI current", request.spotifyUri, currentState);
-      const settled = await this.beforeDeadline(this.delay(PRIME_SETTLE_MS), deadline);
-      if (!settled.completed) throw new PlaybackStartTimeoutError();
-      this.ensureGeneration(generation);
-      this.debug("prime settled", request.spotifyUri, await this.player.getCurrentState().catch(() => null));
+      this.debug("requested URI observed playing", request.spotifyUri, currentState);
 
       this.setPhase("prime-pausing", "prime pause requested", request.spotifyUri, currentState);
       const pauseResult = await this.pauseAndConfirm(generation, request.spotifyUri, "prime pause");
-      if (pauseResult === "failed") throw new Error("Spotify did not confirm that the primed track stopped.");
+      if (pauseResult === "failed") throw new PlaybackStopUnconfirmedError("Spotify did not confirm that the primed track stopped.");
       this.ensureGeneration(generation);
 
       this.setPhase("prime-seeking", "seek 0 requested", request.spotifyUri);
@@ -374,7 +415,7 @@ export class SnippetPlaybackController {
     if (state.paused || !this.isCurrentUri(state, this.active.spotifyUri)) {
       if (!this.isCurrentUri(state, this.active.spotifyUri)) this.armedSpotifyUri = null;
       this.clearRun();
-      this.phase = this.armedSpotifyUri ? "armed" : "idle";
+      this.setPhase(this.armedSpotifyUri ? "armed" : "idle", "active playback stopped by Spotify", this.requestedSpotifyUri ?? "unknown", state);
       this.callbacks.onPlaying(false);
       return;
     }
@@ -390,7 +431,7 @@ export class SnippetPlaybackController {
     }
     if (state && !this.isCurrentUri(state, this.active.spotifyUri)) this.armedSpotifyUri = null;
     this.clearRun();
-    this.phase = this.armedSpotifyUri ? "armed" : "idle";
+    this.setPhase(this.armedSpotifyUri ? "armed" : "idle", "active playback state changed", this.requestedSpotifyUri ?? "unknown", state);
     this.callbacks.onPlaying(false);
   }
 
@@ -409,21 +450,25 @@ export class SnippetPlaybackController {
     this.debug("snippet deadline", active.spotifyUri);
     this.callbacks.onProgress(active.timing.logicalDurationMs);
     this.clearRun();
-    this.callbacks.onPlaying(false);
     this.setPhase("snippet-pausing", "snippet pause requested", active.spotifyUri);
     try {
       const result = await this.pauseAndConfirm(generation, active.spotifyUri, "snippet pause");
       if (generation !== this.generation) return;
       if (result === "confirmed") {
-        this.phase = this.armedSpotifyUri === active.spotifyUri ? "armed" : "idle";
+        this.callbacks.onPlaying(false);
+        this.setPhase(this.armedSpotifyUri === active.spotifyUri ? "armed" : "idle", "snippet pause confirmed", active.spotifyUri);
         return;
       }
+      if (result === "cancelled") return;
       this.armedSpotifyUri = null;
-      this.phase = "failed";
+      this.callbacks.onPlaying(true);
+      this.setPhase("failed", "snippet pause was not confirmed", active.spotifyUri);
       this.callbacks.onStopError?.("Spotify did not confirm that playback stopped. Press Pause and try again.");
     } catch (error) {
       if (generation !== this.generation) return;
-      this.failFromOperation(error);
+      this.armedSpotifyUri = null;
+      this.callbacks.onPlaying(true);
+      this.setPhase("failed", "snippet pause failed", active.spotifyUri, undefined, this.errorMessage(error));
       this.callbacks.onStopError?.(this.errorMessage(error));
     }
   }
@@ -435,30 +480,63 @@ export class SnippetPlaybackController {
   ): Promise<"confirmed" | "cancelled" | "failed"> {
     const deadline = this.now() + PAUSE_CONFIRM_TIMEOUT_MS;
     let state = await this.player.getCurrentState().catch(() => null);
+    let localAttempts = 0;
+    let remoteAttempted = false;
     if (generation !== this.generation) return "cancelled";
-    if (state && !this.isRequestedTrackPlaying(state, spotifyUri)) {
-      this.debug(`${phaseLabel} confirmed`, spotifyUri, state);
-      return "confirmed";
-    }
 
-    for (let attempt = 0; attempt < PAUSE_CONFIRM_MAX_ATTEMPTS; attempt += 1) {
+    while (this.now() < deadline) {
       if (generation !== this.generation) return "cancelled";
-      this.assertAllowed(state, "pausing", "pause");
-      this.debug(`${phaseLabel} requested`, spotifyUri, state);
-      const paused = await this.beforeDeadline(this.runOperation("pause", () => this.requestPause()), deadline);
-      if (!paused.completed || generation !== this.generation) return generation === this.generation ? "failed" : "cancelled";
+      if (state && !this.isRequestedTrackPlaying(state, spotifyUri)) {
+        const stable = await this.confirmStoppedStaysStable(generation, spotifyUri, deadline);
+        if (stable === "cancelled") return "cancelled";
+        if (stable === "confirmed") {
+          this.debug(`${phaseLabel} confirmed and stable`, spotifyUri, state);
+          return "confirmed";
+        }
+        state = stable;
+      }
+
+      if (this.isRequestedTrackPlaying(state, spotifyUri)
+        && localAttempts < PAUSE_CONFIRM_MAX_ATTEMPTS
+        && !state.disallows?.pausing) {
+        localAttempts += 1;
+        this.debug(`${phaseLabel} local pause requested`, spotifyUri, state);
+        const paused = await this.beforeDeadline(this.requestPause().catch(() => undefined), deadline);
+        if (!paused.completed) return "failed";
+      } else if (this.isRequestedTrackPlaying(state, spotifyUri)
+        && !remoteAttempted
+        && this.dependencies.pauseRemotely) {
+        remoteAttempted = true;
+        this.debug(`${phaseLabel} remote pause requested`, spotifyUri, state);
+        const paused = await this.beforeDeadline(this.dependencies.pauseRemotely().catch(() => undefined), deadline);
+        if (!paused.completed) return "failed";
+      }
+
       const waited = await this.beforeDeadline(this.delay(PAUSE_CONFIRM_INTERVAL_MS), deadline);
-      if (!waited.completed || generation !== this.generation) return generation === this.generation ? "failed" : "cancelled";
+      if (!waited.completed || generation !== this.generation) {
+        return generation === this.generation ? "failed" : "cancelled";
+      }
       const result = await this.beforeDeadline(this.player.getCurrentState().catch(() => null), deadline);
       if (!result.completed) return "failed";
-      if (generation !== this.generation) return "cancelled";
       state = result.value;
-      if (state && !this.isRequestedTrackPlaying(state, spotifyUri)) {
-        this.debug(`${phaseLabel} confirmed`, spotifyUri, state);
-        return "confirmed";
-      }
     }
     return "failed";
+  }
+
+  private async confirmStoppedStaysStable(
+    generation: number,
+    spotifyUri: string,
+    deadline: number,
+  ): Promise<"confirmed" | "cancelled" | SnippetPlayerState | null> {
+    const waited = await this.beforeDeadline(this.delay(PAUSE_STABILIZATION_MS), deadline);
+    if (!waited.completed) return null;
+    if (generation !== this.generation) return "cancelled";
+    const result = await this.beforeDeadline(this.player.getCurrentState().catch(() => null), deadline);
+    if (!result.completed) return null;
+    if (generation !== this.generation) return "cancelled";
+    return result.value && !this.isRequestedTrackPlaying(result.value, spotifyUri)
+      ? "confirmed"
+      : result.value;
   }
 
   private async beforeDeadline<T>(
@@ -558,18 +636,34 @@ export class SnippetPlaybackController {
     this.clearRun();
     this.preparingTrack = null;
     this.armedSpotifyUri = null;
-    this.phase = "failed";
+    this.setPhase("failed", "operation failed", this.requestedSpotifyUri ?? "unknown", undefined, this.errorMessage(error));
     this.callbacks.onPlaying(false);
-    this.debug("operation failed", this.requestedSpotifyUri ?? "unknown", undefined, this.errorMessage(error));
+  }
+
+  private failFromUnconfirmedStop(error: PlaybackStopUnconfirmedError): void {
+    ++this.generation;
+    this.clearRun();
+    this.preparingTrack = null;
+    this.armedSpotifyUri = null;
+    this.callbacks.onPlaying(true);
+    this.setPhase("failed", "stop could not be confirmed", this.requestedSpotifyUri ?? "unknown", undefined, error.message);
+    this.callbacks.onStopError?.(`${error.message} Press Pause and try again.`);
   }
 
   private errorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
   }
 
-  private setPhase(phase: PlaybackPhase, event: string, spotifyUri: string, state?: SnippetPlayerState | null): void {
+  private setPhase(
+    phase: PlaybackPhase,
+    event: string,
+    spotifyUri: string,
+    state?: SnippetPlayerState | null,
+    error?: string,
+  ): void {
     this.phase = phase;
-    this.debug(event, spotifyUri, state);
+    this.callbacks.onPhase?.(phase);
+    this.debug(event, spotifyUri, state, error);
   }
 
   private debug(event: string, spotifyUri: string, state?: SnippetPlayerState | null, error?: string): void {
