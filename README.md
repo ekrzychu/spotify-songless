@@ -57,6 +57,7 @@ Soundcharts credentials are used only by the optional server-side diagnostic. Pu
 SOUNDCHARTS_CLIENT_ID=
 SOUNDCHARTS_CLIENT_SECRET=
 SOUNDCHARTS_QUOTA_RESERVE=50
+SOUNDCHARTS_DEBUG=false
 ```
 
 ## Initial installation
@@ -138,23 +139,39 @@ To test Soundcharts resolution and Spotify audience access against 10 determinis
 npm run soundcharts:test
 ```
 
-Use a smaller diagnostic batch with `npm run soundcharts:test -- --limit 5`; values above 10 are clamped to 10. The command uses the current client-credentials flow, performs no database writes, and prints its approximate request count. Soundcharts song-level Spotify audience values are cumulative Spotify stream counts.
+Use a smaller diagnostic batch with `npm run soundcharts:test -- --limit 5`; values above 10 are clamped to 10. The command uses the current client-credentials flow, performs no database writes, and prints explicit OAuth/customer/retry telemetry. Soundcharts song-level Spotify audience values are cumulative Spotify stream counts.
+
+HTTP request totals are not treated as quota consumption. Quota remaining is reported only when Soundcharts supplies a valid `x-quota-remaining` header on a customer API response. `SOUNDCHARTS_DEBUG=true` enables sanitized endpoint-family, status, quota-header, and retry diagnostics without logging credentials or tokens.
 
 ## Enrich stream counts from Soundcharts
 
-Apply the additive provenance schema once before the first enrichment run:
+Plan a deficit-aware batch before making any external requests:
 
 ```powershell
-npm run db:push
+npm run streams:plan:soundcharts -- --limit=100
 ```
 
-Then enrich a deterministic, category-balanced batch of 100 recording groups:
+The planner reads SQLite only: it requests no OAuth token, makes no Spotify or Soundcharts requests, and performs no database writes. It prints the current category-by-difficulty gameplay matrix, thin cells, selected recording groups, and a customer HTTP request estimate. Candidate difficulty remains unknown until verified Soundcharts stream counts are returned.
+
+The default planning target is 10 ranked tracks per active category/difficulty cell. Use `--target-per-cell=N`, `--limit=N`, or `--verbose` to adjust the report. Previously resolved groups that still have no audience value are reported but excluded by default; include them deliberately with `--include-cached-unranked`.
+
+Start real enrichment with one canary recording group:
 
 ```powershell
-npm run streams:enrich:soundcharts -- --limit 100
+npm run streams:enrich:soundcharts -- --canary
 ```
 
-The default is 100 groups and the maximum is 400 per execution. Tracks with existing stream counts are skipped. Local Spotify versions sharing a normalized ISRC are processed as one recording group, identical Soundcharts stream values across Spotify identifiers are counted once, and successful values use the centralized difficulty classifier. The command stops when the reported quota reaches `SOUNDCHARTS_QUOTA_RESERVE`, which defaults to 50.
+Canary mode selects exactly one recording group, disables refresh, and permits at most three customer API attempts. The OAuth token request is tracked separately and is not part of that three-request budget. Inspect its telemetry before running a small batch such as:
+
+```powershell
+npm run streams:enrich:soundcharts -- --limit=10 --max-api-requests=30
+```
+
+Execution uses the same deterministic deficit-aware selector as the planner. Active genre and decade deficits drive selection, with the three largest category deficits per recording group contributing to its score. This rewards useful category overlap without letting heavily tagged tracks dominate. Re-run the planner after each batch because newly verified difficulty values change the coverage matrix.
+
+The default execution limit is 100 groups, the maximum is 400, and the default hard customer API request budget is 300. Every customer attempt, including a 429 retry, consumes that execution budget; the OAuth request does not. The client does not call `/api/v2/team/usage` automatically. `SOUNDCHARTS_QUOTA_RESERVE` is enforced only after a valid quota header has been observed, while the hard request budget protects runs whose quota remains unknown.
+
+Tracks with existing stream counts are skipped. Local Spotify versions sharing a normalized ISRC are processed as one recording group, identical Soundcharts stream values across Spotify identifiers are counted once, and successful values use the centralized difficulty classifier.
 
 An explicit refresh updates missing tracks plus values whose current source is Soundcharts; CSV-owned values remain untouched:
 
@@ -162,7 +179,7 @@ An explicit refresh updates missing tracks plus values whose current source is S
 npm run streams:enrich:soundcharts -- --limit 100 --refresh
 ```
 
-Resolved songs without audience data retain a null stream count and difficulty. The Soundcharts UUID is cached so a later attempt can skip identifier resolution.
+Resolved songs without audience data retain a null stream count and difficulty. The Soundcharts UUID is cached so a deliberate later attempt can skip identifier resolution; these cached-unranked groups remain excluded unless `--include-cached-unranked` is supplied.
 
 ## Import verified lifetime stream counts
 

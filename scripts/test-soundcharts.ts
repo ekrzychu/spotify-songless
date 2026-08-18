@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { db } from "../src/lib/db";
 import {
+  formatSoundchartsRequestTelemetry,
   SoundchartsApiError,
   SoundchartsClient,
   type SoundchartsErrorCode,
@@ -102,7 +103,7 @@ function printTrack(
   ].join("\n"));
 }
 
-function printSummary(summary: Summary, requestCount: number): void {
+function printSummary(summary: Summary, client: SoundchartsClient): void {
   console.log([
     "\nSUMMARY",
     `Tracks selected: ${summary.selected}`,
@@ -115,7 +116,8 @@ function printSummary(summary: Summary, requestCount: number): void {
     `Forbidden: ${summary.forbidden}`,
     `Rate limited: ${summary.rateLimited}`,
     `Other errors: ${summary.otherErrors}`,
-    `API requests made (including token): ${requestCount}`,
+    "",
+    formatSoundchartsRequestTelemetry(client.telemetry),
   ].join("\n"));
 }
 
@@ -127,7 +129,7 @@ async function main(): Promise<void> {
     take: limit,
     select: { spotifyTrackId: true, isrc: true, title: true, artistNames: true },
   });
-  const client = new SoundchartsClient();
+  const client = new SoundchartsClient({ maxCustomerApiRequests: limit * 3 });
   const summary: Summary = {
     selected: tracks.length,
     tested: 0,
@@ -147,7 +149,7 @@ async function main(): Promise<void> {
   } catch (error) {
     const code = safeErrorCode(error);
     console.log(`Authentication status: ${recordError(summary, code)}`);
-    printSummary(summary, client.requestCount);
+    printSummary(summary, client);
     process.exitCode = 1;
     return;
   }
@@ -183,7 +185,7 @@ async function main(): Promise<void> {
     console.log("");
   }
 
-  printSummary(summary, client.requestCount);
+  printSummary(summary, client);
 }
 
 main()
