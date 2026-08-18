@@ -8,7 +8,6 @@ import { difficultyFromStreams } from "@/lib/game/difficulty";
 import type { EnrichmentRecordingGroup } from "@/lib/streams/enrichment-selection";
 import type { SoundchartsStreamCountResult } from "@/lib/streams/soundcharts-provider";
 import type { Difficulty } from "@/types/game";
-import { ALLOWED_GAME_LANGUAGE_CODES } from "@/lib/catalog/track-language";
 
 export interface SoundchartsEnrichmentProvider {
   getStreamCountResult(input: {
@@ -97,7 +96,6 @@ export async function enrichRecordingGroup(
   const where: Prisma.GameTrackWhereInput = {
     id: { in: group.targetTrackIds },
     languageEligible: true,
-    languageCode: { in: [...ALLOWED_GAME_LANGUAGE_CODES] },
     ...eligibility,
   };
 

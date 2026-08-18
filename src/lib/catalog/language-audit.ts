@@ -1,4 +1,4 @@
-import { LANGUAGE_OVERRIDES, isAllowedGameLanguage } from "@/lib/catalog/track-language";
+import { LANGUAGE_OVERRIDES, isAcceptedGameLanguage } from "@/lib/catalog/track-language";
 
 export type LanguageAuditTrack = {
   spotifyTrackId: string;
@@ -12,9 +12,10 @@ export type LanguageAuditTrack = {
 
 export type LanguageAudit = {
   total: number;
-  eligible: number;
-  ineligible: number;
-  unknown: number;
+  accepted: number;
+  classifiedAllowed: number;
+  unclassifiedAccepted: number;
+  rejectedClassified: number;
   manualOverridesConfigured: number;
   manualOverrides: Array<{ spotifyTrackId: string; languageCode: string }>;
   byLanguage: Record<string, number>;
@@ -37,17 +38,24 @@ export function buildLanguageAudit(
     "0.95-1.00": 0,
   };
   const ambiguousSamples: LanguageAudit["ambiguousSamples"] = [];
-  let eligible = 0;
-  let unknown = 0;
+  let accepted = 0;
+  let classifiedAllowed = 0;
+  let unclassifiedAccepted = 0;
+  let rejectedClassified = 0;
 
   for (const track of tracks) {
     const language = track.languageCode ?? "unknown";
     const source = track.languageSource ?? "unknown";
     byLanguage[language] = (byLanguage[language] ?? 0) + 1;
     bySource[source] = (bySource[source] ?? 0) + 1;
-    if (track.languageEligible && isAllowedGameLanguage(track.languageCode)) eligible += 1;
+    if (isAcceptedGameLanguage(track.languageCode)) {
+      accepted += 1;
+      if (track.languageCode === null) unclassifiedAccepted += 1;
+      else classifiedAllowed += 1;
+    } else {
+      rejectedClassified += 1;
+    }
     if (track.languageCode === null) {
-      unknown += 1;
       if (ambiguousSamples.length < sampleLimit) {
         ambiguousSamples.push({ title: track.title, artistNames: track.artistNames, source });
       }
@@ -62,9 +70,10 @@ export function buildLanguageAudit(
 
   return {
     total: tracks.length,
-    eligible,
-    ineligible: tracks.length - eligible,
-    unknown,
+    accepted,
+    classifiedAllowed,
+    unclassifiedAccepted,
+    rejectedClassified,
     manualOverridesConfigured: Object.keys(LANGUAGE_OVERRIDES).length,
     manualOverrides: Object.entries(LANGUAGE_OVERRIDES)
       .map(([spotifyTrackId, languageCode]) => ({ spotifyTrackId, languageCode }))
@@ -84,9 +93,10 @@ export function formatLanguageAudit(audit: LanguageAudit): string {
     "CATALOG LANGUAGE AUDIT",
     "",
     `Total tracks: ${audit.total}`,
-    `Eligible EN/PL/ES: ${audit.eligible}`,
-    `Ineligible: ${audit.ineligible}`,
-    `Unknown/uncertain: ${audit.unknown}`,
+    `Accepted by language policy: ${audit.accepted}`,
+    `  Classified EN/PL/ES: ${audit.classifiedAllowed}`,
+    `  Unclassified/unknown/uncertain: ${audit.unclassifiedAccepted}`,
+    `Rejected classified other languages: ${audit.rejectedClassified}`,
     `Manual overrides configured: ${audit.manualOverridesConfigured}`,
     "",
     "BY LANGUAGE",

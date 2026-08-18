@@ -32,6 +32,8 @@ export type TrackLanguageInput = {
 
 type LanguageDetector = (text: string) => Array<{ lang: string; accuracy: number }>;
 
+const LANGUAGE_CONFIDENCE_COMPARISON_EPSILON = 1e-12;
+
 const VERSION_METADATA = /\b(?:remaster(?:ed)?(?:\s+\d{4})?|radio edit|live|mono version|instrumental|original mix|extended mix|tv version)\b/giu;
 
 export function normalizeLanguageDetectionText(title: string, albumName: string): string {
@@ -58,13 +60,22 @@ export function isAllowedGameLanguage(code: string | null | undefined): code is 
   return ALLOWED_GAME_LANGUAGE_CODES.includes(code as AllowedGameLanguageCode);
 }
 
+export function isAcceptedGameLanguage(code: string | null | undefined): boolean {
+  return code == null || isAllowedGameLanguage(code);
+}
+
 function certainState(code: string, source: "manual" | "provider", confidence = 1): TrackLanguageState {
   return {
     languageCode: code,
     languageSource: source,
     languageConfidence: confidence,
-    languageEligible: isAllowedGameLanguage(code),
+    languageEligible: isAcceptedGameLanguage(code),
   };
+}
+
+function hasEquivalentConfidence(left: number | null, right: number | null): boolean {
+  if (left === null || right === null) return left === right;
+  return Math.abs(left - right) <= LANGUAGE_CONFIDENCE_COMPARISON_EPSILON;
 }
 
 export function deriveTrackLanguageState(
@@ -92,7 +103,7 @@ export function deriveTrackLanguageState(
       languageCode: null,
       languageSource: "unknown",
       languageConfidence: null,
-      languageEligible: false,
+      languageEligible: true,
     };
   }
 
@@ -112,14 +123,14 @@ export function deriveTrackLanguageState(
       languageCode: null,
       languageSource: "detector-uncertain",
       languageConfidence: confidence,
-      languageEligible: false,
+      languageEligible: true,
     };
   }
   return {
     languageCode: code,
     languageSource: "detector",
     languageConfidence: confidence,
-    languageEligible: isAllowedGameLanguage(code),
+    languageEligible: isAcceptedGameLanguage(code),
   };
 }
 
@@ -133,9 +144,10 @@ export type LanguageBackfillTrack = TrackLanguageInput & {
 
 export type LanguageBackfillSummary = {
   scanned: number;
-  eligible: number;
-  ineligibleOther: number;
-  unknown: number;
+  accepted: number;
+  classifiedAllowed: number;
+  unclassifiedAccepted: number;
+  rejectedClassified: number;
   updated: number;
   byLanguage: Record<string, number>;
   samples: {
@@ -156,9 +168,10 @@ export async function backfillTrackLanguages(
   const sampleLimit = options.sampleLimit ?? 10;
   const byLanguage: Record<string, number> = {};
   const samples: LanguageBackfillSummary["samples"] = { allowed: [], rejected: [], unknown: [] };
-  let eligible = 0;
-  let ineligibleOther = 0;
-  let unknown = 0;
+  let accepted = 0;
+  let classifiedAllowed = 0;
+  let unclassifiedAccepted = 0;
+  let rejectedClassified = 0;
   let updated = 0;
 
   for (const track of tracks) {
@@ -170,33 +183,45 @@ export async function backfillTrackLanguages(
     const key = state.languageCode ?? "unknown";
     byLanguage[key] = (byLanguage[key] ?? 0) + 1;
     if (state.languageEligible) {
-      eligible += 1;
-      if (samples.allowed.length < sampleLimit) {
+      accepted += 1;
+      if (state.languageCode === null) {
+        unclassifiedAccepted += 1;
+        if (samples.unknown.length < sampleLimit) {
+          samples.unknown.push({ title: track.title, source: state.languageSource });
+        }
+      } else {
+        classifiedAllowed += 1;
+      }
+      if (state.languageCode && samples.allowed.length < sampleLimit) {
         samples.allowed.push({ title: track.title, code: state.languageCode!, source: state.languageSource });
       }
     } else if (state.languageCode) {
-      ineligibleOther += 1;
+      rejectedClassified += 1;
       if (samples.rejected.length < sampleLimit) {
         samples.rejected.push({ title: track.title, code: state.languageCode, source: state.languageSource });
-      }
-    } else {
-      unknown += 1;
-      if (samples.unknown.length < sampleLimit) {
-        samples.unknown.push({ title: track.title, source: state.languageSource });
       }
     }
 
     if (
       track.languageCode !== state.languageCode
       || track.languageSource !== state.languageSource
-      || track.languageConfidence !== state.languageConfidence
+      || !hasEquivalentConfidence(track.languageConfidence, state.languageConfidence)
       || track.languageEligible !== state.languageEligible
     ) {
       await dependencies.updateTrack(track.id, { ...state, languageUpdatedAt: now });
       updated += 1;
     }
   }
-  return { scanned: tracks.length, eligible, ineligibleOther, unknown, updated, byLanguage, samples };
+  return {
+    scanned: tracks.length,
+    accepted,
+    classifiedAllowed,
+    unclassifiedAccepted,
+    rejectedClassified,
+    updated,
+    byLanguage,
+    samples,
+  };
 }
 
 export function formatLanguageBackfill(summary: LanguageBackfillSummary): string {
@@ -207,9 +232,10 @@ export function formatLanguageBackfill(summary: LanguageBackfillSummary): string
     "LANGUAGE BACKFILL",
     "",
     `Tracks scanned: ${summary.scanned}`,
-    `Eligible EN/PL/ES: ${summary.eligible}`,
-    `Ineligible other languages: ${summary.ineligibleOther}`,
-    `Unknown/uncertain: ${summary.unknown}`,
+    `Accepted by language policy: ${summary.accepted}`,
+    `  Classified EN/PL/ES: ${summary.classifiedAllowed}`,
+    `  Unclassified/unknown/uncertain: ${summary.unclassifiedAccepted}`,
+    `Rejected classified other languages: ${summary.rejectedClassified}`,
     `Rows updated: ${summary.updated}`,
     "",
     "BY LANGUAGE",
@@ -217,13 +243,13 @@ export function formatLanguageBackfill(summary: LanguageBackfillSummary): string
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([code, count]) => `${code}: ${count}`),
     "",
-    "ALLOWED SAMPLES",
+    "ACCEPTED CLASSIFIED EN/PL/ES SAMPLES",
     ...sampleLines(summary.samples.allowed),
     "",
     "REJECTED SAMPLES",
     ...sampleLines(summary.samples.rejected),
     "",
-    "UNKNOWN SAMPLES",
+    "ACCEPTED UNCLASSIFIED/UNKNOWN/UNCERTAIN SAMPLES",
     ...sampleLines(summary.samples.unknown),
   ].join("\n");
 }

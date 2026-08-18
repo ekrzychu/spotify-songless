@@ -42,7 +42,13 @@ describe("catalog metadata upsert preservation", () => {
   it("never includes stream, difficulty, or Soundcharts enrichment in Spotify update data", async () => {
     await expect(upsertCatalogTrack(track, "pop")).resolves.toBe("updated");
     const update = mocks.upsertTrack.mock.calls[0]?.[0].update as Record<string, unknown>;
-    expect(update).toMatchObject({ title: "Rediscovered", releaseDate: "2020-01-02" });
+    expect(update).toMatchObject({
+      title: "Rediscovered",
+      releaseDate: "2020-01-02",
+      languageCode: null,
+      languageSource: "unknown",
+      languageEligible: true,
+    });
     for (const field of [
       "streamCount", "difficulty", "soundchartsUuid", "soundchartsReleaseDate",
       "soundchartsGenresJson", "streamCountSource", "streamCountUpdatedAt",

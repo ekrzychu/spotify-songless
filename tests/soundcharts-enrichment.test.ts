@@ -72,7 +72,6 @@ describe("Soundcharts database enrichment", () => {
       where: {
         id: { in: ["track-1", "track-2"] },
         languageEligible: true,
-        languageCode: { in: ["en", "pl", "es"] },
         streamCount: null,
       },
       data: {
@@ -111,7 +110,6 @@ describe("Soundcharts database enrichment", () => {
       where: {
         id: { in: ["track-1"] },
         languageEligible: true,
-        languageCode: { in: ["en", "pl", "es"] },
         streamCount: null,
       },
       data: {
@@ -141,7 +139,6 @@ describe("Soundcharts database enrichment", () => {
     expect(database.gameTrack.updateMany.mock.calls[0]?.[0].where).toEqual({
       id: { in: ["track-1"] },
       languageEligible: true,
-      languageCode: { in: ["en", "pl", "es"] },
       OR: [{ streamCount: null }, { streamCountSource: "soundcharts" }],
     });
     expect(database.trackCategory.findMany).not.toHaveBeenCalled();

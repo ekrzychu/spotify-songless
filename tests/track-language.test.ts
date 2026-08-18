@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   backfillTrackLanguages,
   deriveTrackLanguageState,
+  isAcceptedGameLanguage,
   normalizeLanguageDetectionText,
   type LanguageBackfillTrack,
   type TrackLanguageState,
@@ -12,6 +13,15 @@ function detect(title: string, albumName: string): TrackLanguageState {
 }
 
 describe("track language classification", () => {
+  it("accepts only unclassified and EN/PL/ES classifications", () => {
+    expect([null, undefined, "en", "pl", "es"].map(isAcceptedGameLanguage)).toEqual([
+      true, true, true, true, true,
+    ]);
+    expect(["de", "fr", "it", "pt", "ru"].map(isAcceptedGameLanguage)).toEqual([
+      false, false, false, false, false,
+    ]);
+  });
+
   it.each([
     ["en", "Dancing through the night with all my friends", "Songs about love and summer"],
     ["pl", "Tańczymy razem przez całą noc", "Piosenki o miłości i lecie"],
@@ -43,7 +53,7 @@ describe("track language classification", () => {
       languageCode: null,
       languageSource: "unknown",
       languageConfidence: null,
-      languageEligible: false,
+      languageEligible: true,
     });
   });
 
@@ -105,10 +115,63 @@ describe("track language classification", () => {
     const first = await backfillTrackLanguages(tracks, { updateTrack });
     const second = await backfillTrackLanguages(tracks, { updateTrack });
 
-    expect(first).toMatchObject({ scanned: 1, eligible: 1, updated: 1, byLanguage: { en: 1 } });
-    expect(second).toMatchObject({ scanned: 1, eligible: 1, updated: 0, byLanguage: { en: 1 } });
+    expect(first).toMatchObject({
+      scanned: 1, accepted: 1, classifiedAllowed: 1, unclassifiedAccepted: 0,
+      rejectedClassified: 0, updated: 1, byLanguage: { en: 1 },
+    });
+    expect(second).toMatchObject({ scanned: 1, accepted: 1, updated: 0, byLanguage: { en: 1 } });
     expect(updateTrack).toHaveBeenCalledTimes(1);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+
+  it("backfills existing unknown and uncertain states to accepted without inventing a code", async () => {
+    const tracks: LanguageBackfillTrack[] = [
+      {
+        id: "short", spotifyTrackId: "short", title: "One", albumName: "One",
+        languageCode: null, languageSource: "unknown", languageConfidence: null, languageEligible: false,
+      },
+      {
+        id: "uncertain", spotifyTrackId: "uncertain", title: "Bailando bajo la luna",
+        albumName: "Canciones nuevas", languageCode: null, languageSource: "detector-uncertain",
+        languageConfidence: 0.1, languageEligible: false,
+      },
+    ];
+    const updates = new Map<string, TrackLanguageState>();
+    const summary = await backfillTrackLanguages(tracks, {
+      updateTrack: async (id, state) => { updates.set(id, state); },
+    }, { detector: () => [
+      { lang: "es", accuracy: 0.6 },
+      { lang: "pt", accuracy: 0.5 },
+    ] });
+
+    expect(summary).toMatchObject({
+      accepted: 2, classifiedAllowed: 0, unclassifiedAccepted: 2,
+      rejectedClassified: 0, updated: 2, byLanguage: { unknown: 2 },
+    });
+    expect([...updates.values()]).toEqual([
+      { languageCode: null, languageSource: "unknown", languageConfidence: null, languageEligible: true, languageUpdatedAt: expect.any(Date) },
+      { languageCode: null, languageSource: "detector-uncertain", languageConfidence: 0.6, languageEligible: true, languageUpdatedAt: expect.any(Date) },
+    ]);
+  });
+
+  it("treats SQLite-scale floating confidence differences as idempotent", async () => {
+    const updateTrack = vi.fn();
+    const summary = await backfillTrackLanguages([{
+      id: "rounded",
+      spotifyTrackId: "rounded",
+      title: "Several words are present in this title",
+      albumName: "Several more words are present here",
+      languageCode: null,
+      languageSource: "detector-uncertain",
+      languageConfidence: 0.04347826086956522,
+      languageEligible: true,
+    }], { updateTrack }, { detector: () => [
+      { lang: "en", accuracy: 0.043478260869565216 },
+      { lang: "de", accuracy: 0.04 },
+    ] });
+
+    expect(summary.updated).toBe(0);
+    expect(updateTrack).not.toHaveBeenCalled();
   });
 });

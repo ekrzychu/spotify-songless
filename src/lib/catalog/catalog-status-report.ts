@@ -20,10 +20,11 @@ export type CatalogStatusData = {
   gameplayRankedTracks: number;
   unrankedTracks: number;
   language: {
-    eligible: number;
-    ineligible: number;
-    unknown: number;
-    eligibleRanked: number;
+    accepted: number;
+    classifiedAllowed: number;
+    unclassifiedAccepted: number;
+    rejectedClassified: number;
+    acceptedRanked: number;
     byCode: Record<string, number>;
   };
   difficulty: Record<Difficulty, number>;
@@ -60,15 +61,17 @@ export function formatCatalogStatus(data: CatalogStatusData): string {
     `Game-eligible ranked tracks (playable): ${data.gameplayRankedTracks}`,
     `Unranked tracks: ${data.unrankedTracks}`,
     "",
-    "LANGUAGE ELIGIBILITY",
-    `Eligible EN/PL/ES: ${data.language.eligible}`,
-    `Ineligible: ${data.language.ineligible}`,
-    `Unknown/uncertain: ${data.language.unknown}`,
-    `Eligible ranked and playable: ${data.language.eligibleRanked}`,
+    "LANGUAGE POLICY",
+    `Accepted tracks: ${data.language.accepted}`,
+    `  Classified EN/PL/ES: ${data.language.classifiedAllowed}`,
+    `  Unclassified/unknown/uncertain: ${data.language.unclassifiedAccepted}`,
+    `Rejected classified other languages: ${data.language.rejectedClassified}`,
+    `Accepted ranked and playable: ${data.language.acceptedRanked}`,
     `English (en): ${data.language.byCode.en ?? 0}`,
     `Polish (pl): ${data.language.byCode.pl ?? 0}`,
     `Spanish (es): ${data.language.byCode.es ?? 0}`,
-    `Other: ${otherLanguages}`,
+    `Other classified: ${otherLanguages}`,
+    `Unknown/uncertain: ${data.language.byCode.unknown ?? 0}`,
     "",
     "DIFFICULTY",
     ...DIFFICULTIES.map((difficulty) => `${DIFFICULTY_LABELS[difficulty]}: ${data.difficulty[difficulty]}`),

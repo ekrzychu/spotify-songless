@@ -6,7 +6,7 @@ import {
   type CatalogPoolStatus,
 } from "../src/lib/catalog/catalog-status-report";
 import { DIFFICULTIES, type Difficulty } from "../src/types/game";
-import { ALLOWED_GAME_LANGUAGE_CODES } from "../src/lib/catalog/track-language";
+import { isAcceptedGameLanguage } from "../src/lib/catalog/track-language";
 
 async function main(): Promise<void> {
   const categories = activeCatalogStatusCategories();
@@ -31,7 +31,6 @@ async function main(): Promise<void> {
       playable: true,
       gameEligible: true,
       languageEligible: true,
-      languageCode: { in: [...ALLOWED_GAME_LANGUAGE_CODES] },
       difficulty: { not: null },
       streamCount: { not: null },
     } }),
@@ -66,7 +65,6 @@ async function main(): Promise<void> {
           playable: true,
           gameEligible: true,
           languageEligible: true,
-          languageCode: { in: [...ALLOWED_GAME_LANGUAGE_CODES] },
           difficulty: { not: null },
           streamCount: { not: null },
           categories: { some: { categoryId: category.id, gameEligible: true } },
@@ -76,11 +74,9 @@ async function main(): Promise<void> {
     })),
   ]);
   const difficulty = Object.fromEntries(difficultyCounts) as Record<Difficulty, number>;
-  const languageEligible = languageRows.filter((track) => (
-    track.languageEligible
-    && track.languageCode !== null
-    && ALLOWED_GAME_LANGUAGE_CODES.includes(track.languageCode as (typeof ALLOWED_GAME_LANGUAGE_CODES)[number])
-  ));
+  const acceptedLanguageRows = languageRows.filter((track) => isAcceptedGameLanguage(track.languageCode));
+  const classifiedAllowedRows = acceptedLanguageRows.filter((track) => track.languageCode !== null);
+  const unclassifiedAcceptedRows = acceptedLanguageRows.filter((track) => track.languageCode === null);
   const languageByCode = languageRows.reduce<Record<string, number>>((counts, track) => {
     const code = track.languageCode ?? "unknown";
     counts[code] = (counts[code] ?? 0) + 1;
@@ -96,11 +92,13 @@ async function main(): Promise<void> {
     gameplayRankedTracks,
     unrankedTracks: totalTracks - rankedTracks,
     language: {
-      eligible: languageEligible.length,
-      ineligible: totalTracks - languageEligible.length,
-      unknown: languageRows.filter((track) => track.languageCode === null).length,
-      eligibleRanked: languageEligible.filter((track) => (
-        track.playable && track.gameEligible && track.streamCount !== null && track.difficulty !== null
+      accepted: acceptedLanguageRows.length,
+      classifiedAllowed: classifiedAllowedRows.length,
+      unclassifiedAccepted: unclassifiedAcceptedRows.length,
+      rejectedClassified: totalTracks - acceptedLanguageRows.length,
+      acceptedRanked: acceptedLanguageRows.filter((track) => (
+        track.languageEligible
+        && track.playable && track.gameEligible && track.streamCount !== null && track.difficulty !== null
       )).length,
       byCode: languageByCode,
     },

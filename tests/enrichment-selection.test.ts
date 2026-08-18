@@ -109,8 +109,11 @@ describe("Soundcharts recording groups", () => {
     expect(groups[0]?.categoryIds).toEqual(["pop"]);
   });
 
-  it("targets only the allowed-language local version in a mixed ISRC group", () => {
+  it("targets unknown and allowed-classified versions but not a rejected-classified sibling", () => {
     const groups = groupEnrichmentCandidates([
+      track("unknown", "pop", {
+        isrc: "USABC1234567", languageCode: null, languageSource: "unknown", languageEligible: true,
+      }),
       track("english", "pop", { isrc: "USABC1234567" }),
       track("german", "rock", {
         isrc: "USABC1234567", languageCode: "de", languageEligible: false,
@@ -118,19 +121,27 @@ describe("Soundcharts recording groups", () => {
     ]);
 
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.targetTrackIds).toEqual(["english"]);
-    expect(groups[0]?.tracks.map((candidate) => candidate.id)).toEqual(["english"]);
+    expect(groups[0]?.targetTrackIds).toEqual(["unknown", "english"]);
+    expect(groups[0]?.tracks.map((candidate) => candidate.id).sort()).toEqual(["english", "unknown"]);
   });
 
-  it("excludes unknown, disallowed, and inconsistent language state", () => {
+  it("accepts unknown and uncertain language states without requiring a code", () => {
     const groups = groupEnrichmentCandidates([
       track("allowed", "pop"),
-      track("unknown", "rock", { languageCode: null, languageEligible: false }),
+      track("polish", "pop", { languageCode: "pl", languageEligible: true }),
+      track("spanish", "pop", { languageCode: "es", languageEligible: true }),
+      track("unknown", "rock", {
+        languageCode: null, languageSource: "unknown", languageEligible: true,
+      }),
+      track("uncertain", "rock", {
+        languageCode: null, languageSource: "detector-uncertain", languageEligible: true,
+      }),
       track("disallowed", "rock", { languageCode: "de", languageEligible: false }),
       track("bad-flag", "rock", { languageCode: "en", languageEligible: false }),
-      track("bad-code", "rock", { languageCode: "de", languageEligible: true }),
     ]);
-    expect(groups.map((group) => group.representative.id)).toEqual(["allowed"]);
+    expect(groups.map((group) => group.representative.id).sort()).toEqual([
+      "allowed", "polish", "spanish", "uncertain", "unknown",
+    ]);
   });
 });
 

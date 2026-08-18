@@ -1,5 +1,4 @@
 import { CATEGORIES } from "@/lib/catalog/category-config";
-import { isAllowedGameLanguage } from "@/lib/catalog/track-language";
 import {
   classifyTrackQuality,
   TRACK_QUALITY_REASONS,
@@ -160,7 +159,7 @@ function isGameplayRanked(track: EnrichmentTrackCandidate): boolean {
 }
 
 function isNormalLanguageEligible(track: EnrichmentTrackCandidate): boolean {
-  return track.languageEligible && isAllowedGameLanguage(track.languageCode);
+  return track.languageEligible;
 }
 
 export function groupEnrichmentCandidates(

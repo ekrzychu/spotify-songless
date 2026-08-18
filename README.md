@@ -118,7 +118,7 @@ Available controls are:
 
 `--max-per-shard` can be increased on a later run without resetting progress. Use `--reset-checkpoint` only when intentionally changing checkpoint identity such as the market or year range. Plan mode reads only the local database and checkpoint; it does not request a Spotify access token or call Spotify Search.
 
-`npm run catalog:status` is also local-only. It reports total/playable, game-eligible/game-ineligible, gameplay-ranked, and raw ranked/unranked counts plus active genre and decade pool coverage and a separate language-eligibility section. Historical removed-category relations are not included in active pool reporting.
+`npm run catalog:status` is also local-only. It reports total/playable, game-eligible/game-ineligible, gameplay-ranked, and raw ranked/unranked counts plus active genre and decade pool coverage and a separate language-policy section. Historical removed-category relations are not included in active pool reporting.
 
 `npm run catalog:audit-genres` is a read-only SQLite audit. It contacts neither Spotify nor Soundcharts, requests no OAuth token, and never modifies category relations. The report shows active-genre overlap counts, samples of classical crossover associations, and a conservative title-based track-quality audit. Overlaps are evidence for review, not automatic declarations that a relation is incorrect. Historical relations do not contain Spotify search-shard provenance, so the audit does not invent it.
 
@@ -142,13 +142,13 @@ npm run catalog:backfill-game-eligibility
 
 This deterministic backfill reads and updates SQLite only. It reports scanned, eligible, excluded, updated, and per-reason counts. It changes only `gameEligible`; existing stream counts, difficulty, Soundcharts provenance, and category relations are preserved.
 
-Normal gameplay and Soundcharts enrichment also require a separate language classification. The only allowed codes are `en`, `pl`, and `es`. Apply the additive schema with `npm run db:push`, then classify existing tracks locally with:
+Normal gameplay and Soundcharts enrichment also use a separate language policy. Unclassified, unknown, and uncertain tracks are accepted; classified `en`, `pl`, and `es` tracks are accepted; a track is rejected only when it is classified as another language. After first applying the additive language fields, or whenever policy logic changes, reconcile existing tracks locally with:
 
 ```powershell
 npm run catalog:backfill-languages
 ```
 
-Language precedence is a Spotify-ID manual override in `rules/language_overrides.json`, a trustworthy explicit provider value when one is available, the local `tinyld` detector, then unknown. Spotify currently supplies no trusted lyric-language field to this ingestion path. Detection uses the title and album title after removing common version markers. It requires at least 12 letters, three tokens, detector confidence 0.65, and a 0.20 lead over the next result. Short or uncertain metadata remains unknown and ineligible. This heuristic describes metadata language; it is not verified lyric language. Audit classifications without writes or network access with `npm run catalog:audit-languages`.
+Language precedence is a Spotify-ID manual override in `rules/language_overrides.json`, a trustworthy explicit provider value when one is available, the local `tinyld` detector, then unknown. Spotify currently supplies no trusted lyric-language field to this ingestion path. Detection uses the title and album title after removing common version markers. It requires at least 12 letters, three tokens, detector confidence 0.65, and a 0.20 lead over the next result. Short or uncertain metadata remains explicitly unclassified but accepted. This heuristic describes metadata language; it is not verified lyric language. Audit classifications without writes or network access with `npm run catalog:audit-languages`.
 
 ## Verify Soundcharts access
 
@@ -170,7 +170,7 @@ Plan a neutral deterministic batch before making any external requests:
 npm run streams:plan:soundcharts -- --limit=100
 ```
 
-The planner reads SQLite only: it requests no OAuth token, makes no Spotify or Soundcharts requests, and performs no database writes. It prints raw ranked counts separately from the category-by-difficulty gameplay matrix. Coverage and thin cells are reporting only. Normal enrichment targets require Spotify playability, persistent track eligibility, and an allowed, eligible `en`, `pl`, or `es` language state. Candidate difficulty remains unknown until verified Soundcharts stream counts are returned.
+The planner reads SQLite only: it requests no OAuth token, makes no Spotify or Soundcharts requests, and performs no database writes. It prints raw ranked counts separately from the category-by-difficulty gameplay matrix. Coverage and thin cells are reporting only. Normal enrichment targets require Spotify playability, persistent track eligibility, and `languageEligible=true`; this accepts unknown/unclassified tracks plus classified `en`, `pl`, and `es`, while rejecting classified other languages. Candidate difficulty remains unknown until verified Soundcharts stream counts are returned.
 
 The default reporting target is 10 ranked tracks per active category/difficulty cell. `--target-per-cell=N` changes reporting only and never candidate selection. Use `--limit=N` or `--verbose` to adjust output. Previously resolved groups that still have no audience value are reported but excluded by default; include them deliberately with `--include-cached-unranked`.
 

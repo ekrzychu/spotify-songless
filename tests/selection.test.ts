@@ -34,7 +34,6 @@ describe("random track selection", () => {
       playable: true,
       gameEligible: true,
       languageEligible: true,
-      languageCode: { in: ["en", "pl", "es"] },
       streamCount: { not: null },
       difficulty: "hard",
       categories: { some: { categoryId: "rock", gameEligible: true } },
@@ -49,10 +48,16 @@ describe("random track selection", () => {
       playable: true,
       gameEligible: true,
       languageEligible: true,
-      languageCode: { in: ["en", "pl", "es"] },
       streamCount: { not: null },
       difficulty: "impossible",
     });
+  });
+
+  it("accepts a ranked unknown-language track without requiring languageCode", async () => {
+    await selectRandomTrack({ sessionId: "session", category: "all", difficulty: "normal" });
+    const where = mocks.count.mock.calls[0]?.[0].where as Record<string, unknown>;
+    expect(where.languageEligible).toBe(true);
+    expect(where.languageCode).toBeUndefined();
   });
 
   it("does not require a category association for All", async () => {

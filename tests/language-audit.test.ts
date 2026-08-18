@@ -6,13 +6,13 @@ describe("language audit", () => {
     const tracks = [
       { spotifyTrackId: "a", title: "English", artistNames: "A", languageCode: "en", languageSource: "detector", languageConfidence: 0.97, languageEligible: true },
       { spotifyTrackId: "b", title: "Deutsch", artistNames: "B", languageCode: "de", languageSource: "detector", languageConfidence: 0.9, languageEligible: false },
-      { spotifyTrackId: "c", title: "One", artistNames: "C", languageCode: null, languageSource: "unknown", languageConfidence: null, languageEligible: false },
+      { spotifyTrackId: "c", title: "One", artistNames: "C", languageCode: null, languageSource: "unknown", languageConfidence: null, languageEligible: true },
     ] as const;
     const original = structuredClone(tracks);
     const audit = buildLanguageAudit(tracks);
 
     expect(audit).toMatchObject({
-      total: 3, eligible: 1, ineligible: 2, unknown: 1,
+      total: 3, accepted: 2, classifiedAllowed: 1, unclassifiedAccepted: 1, rejectedClassified: 1,
       byLanguage: { en: 1, de: 1, unknown: 1 },
       bySource: { detector: 2, unknown: 1 },
     });
