@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { SoundchartsApiError } from "@/lib/soundcharts/client";
 import {
+  DefinitiveSoundchartsNotFoundError,
   SoundchartsStreamCountProvider,
   type SoundchartsProviderClient,
 } from "@/lib/streams/soundcharts-provider";
@@ -78,6 +79,30 @@ describe("SoundchartsStreamCountProvider", () => {
       soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
       soundchartsGenres: [{ root: "Pop", sub: ["Art Pop"] }],
     });
+  });
+
+  it("labels only exhausted resolver misses as definitive not found", async () => {
+    const noIsrc = new SoundchartsStreamCountProvider(client({
+      getSongBySpotifyId: vi.fn().mockRejectedValue(new SoundchartsApiError("not_found", 404)),
+    }));
+    await expect(noIsrc.getStreamCountResult({ spotifyTrackId: "spotify-id" }))
+      .rejects.toBeInstanceOf(DefinitiveSoundchartsNotFoundError);
+
+    const bothResolvers = new SoundchartsStreamCountProvider(client({
+      getSongBySpotifyId: vi.fn().mockRejectedValue(new SoundchartsApiError("not_found", 404)),
+      getSongByIsrc: vi.fn().mockRejectedValue(new SoundchartsApiError("not_found", 404)),
+    }));
+    await expect(bothResolvers.getStreamCountResult({ spotifyTrackId: "spotify-id", isrc: "USABC1234567" }))
+      .rejects.toBeInstanceOf(DefinitiveSoundchartsNotFoundError);
+  });
+
+  it("does not label an audience-endpoint not_found as a definitive resolver miss", async () => {
+    const provider = new SoundchartsStreamCountProvider(client({
+      getLatestSpotifyAudienceSnapshot: vi.fn().mockRejectedValue(new SoundchartsApiError("not_found", 404)),
+    }));
+    await expect(provider.getStreamCountResult({ spotifyTrackId: "spotify-id" })).rejects.toEqual(
+      expect.not.objectContaining({ name: "DefinitiveSoundchartsNotFoundError" }),
+    );
   });
 
   it("stops before an API call when the quota reserve is reached", async () => {

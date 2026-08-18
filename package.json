@@ -28,6 +28,7 @@
     "soundcharts:test": "tsx --env-file=.env.local scripts/test-soundcharts.ts",
     "streams:plan:soundcharts": "tsx --env-file=.env.local scripts/plan-soundcharts-enrichment.ts",
     "streams:enrich:soundcharts": "tsx --env-file=.env.local scripts/enrich-streams-soundcharts.ts",
+    "streams:mark-soundcharts-not-found": "tsx --env-file=.env.local scripts/mark-soundcharts-not-found.ts",
     "import:streams": "tsx --env-file=.env.local scripts/import-streams.ts",
     "postinstall": "prisma generate"
   },

@@ -22,6 +22,7 @@ model GameTrack {
   soundchartsUuid        String?
   soundchartsReleaseDate String?
   soundchartsGenresJson  String?
+  soundchartsNotFoundAt  DateTime?
   streamCountSource      String?
   streamCountUpdatedAt   DateTime?
   playable               Boolean                   @default(true)

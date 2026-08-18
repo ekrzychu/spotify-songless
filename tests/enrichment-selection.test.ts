@@ -4,6 +4,7 @@ import {
   buildRankedCoverageMatrix,
   buildSoundchartsEnrichmentPlan,
   executeSoundchartsEnrichmentPlanning,
+  formatSoundchartsEnrichmentPlan,
   groupEnrichmentCandidates,
   parseSoundchartsExecutionOptions,
   parseSoundchartsPlanningOptions,
@@ -28,6 +29,7 @@ function track(
     streamCount: null,
     streamCountSource: null,
     soundchartsUuid: null,
+    soundchartsNotFoundAt: null,
     difficulty: null,
     playable: true,
     gameEligible: true,
@@ -43,6 +45,7 @@ const options: SoundchartsSelectionOptions = {
   limit: 100,
   targetPerCell: 10,
   includeCachedUnranked: false,
+  includeNotFound: false,
   includeNonSonglike: false,
   refresh: false,
 };
@@ -303,6 +306,37 @@ describe("neutral Soundcharts planning", () => {
     expect(includedPlan.selectedGroups.map((group) => group.representative.id)).toContain("cached");
   });
 
+  it("excludes an all-marked group by default and retries it only when explicit", () => {
+    const failedAt = new Date("2026-08-18T12:00:00Z");
+    const fresh = track("fresh", "pop");
+    const failed = track("failed", "rock", { soundchartsNotFoundAt: failedAt });
+    const normal = buildSoundchartsEnrichmentPlan([fresh, failed], options);
+    const retry = buildSoundchartsEnrichmentPlan([fresh, failed], { ...options, includeNotFound: true });
+
+    expect(normal).toMatchObject({
+      freshUnrankedGroups: 1,
+      previouslyNotFoundGroups: 1,
+      includeNotFound: false,
+    });
+    expect(normal.selectedGroups.map((group) => group.representative.id)).toEqual(["fresh"]);
+    expect(retry.selectedGroups.map((group) => group.representative.id)).toContain("failed");
+    expect(formatSoundchartsEnrichmentPlan(normal)).toContain("Include previously not found: no");
+  });
+
+  it("keeps a mixed-marker recording group eligible when it has a new target", () => {
+    const candidates = [
+      track("previous-miss", "pop", {
+        isrc: "USABC1234567", soundchartsNotFoundAt: new Date("2026-08-18T12:00:00Z"),
+      }),
+      track("new-target", "rock", { isrc: "USABC1234567" }),
+    ];
+    const plan = buildSoundchartsEnrichmentPlan(candidates, options);
+
+    expect(plan.previouslyNotFoundGroups).toBe(0);
+    expect(plan.selectedGroups).toHaveLength(1);
+    expect(plan.selectedGroups[0]?.targetTrackIds.sort()).toEqual(["new-target", "previous-miss"]);
+  });
+
   it("uses one shared selector for plan and execution-equivalent options", () => {
     const candidates = [
       track("a", ["pop", "80s"]),
@@ -310,10 +344,11 @@ describe("neutral Soundcharts planning", () => {
       track("skit", ["hip-hop", "90s"], { title: "Track Name (SKIT)" }),
     ];
     const planningOptions = parseSoundchartsPlanningOptions([
-      "--limit=1", "--target-per-cell=7", "--include-cached-unranked",
+      "--limit=1", "--target-per-cell=7", "--include-cached-unranked", "--include-not-found",
     ]);
     const executionOptions = parseSoundchartsExecutionOptions([
-      "--limit=1", "--target-per-cell=7", "--include-cached-unranked", "--max-api-requests=3",
+      "--limit=1", "--target-per-cell=7", "--include-cached-unranked", "--include-not-found",
+      "--max-api-requests=3",
     ]);
     const planning = buildSoundchartsEnrichmentPlan(candidates, planningOptions);
     const execution = buildSoundchartsEnrichmentPlan(candidates, executionOptions);
@@ -362,6 +397,7 @@ describe("neutral Soundcharts planning", () => {
       limit: 500,
       targetPerCell: 12,
       includeCachedUnranked: true,
+      includeNotFound: false,
       includeNonSonglike: true,
       refresh: false,
       verbose: true,

@@ -172,7 +172,7 @@ npm run streams:plan:soundcharts -- --limit=100
 
 The planner reads SQLite only: it requests no OAuth token, makes no Spotify or Soundcharts requests, and performs no database writes. It prints raw ranked counts separately from the category-by-difficulty gameplay matrix. Coverage and thin cells are reporting only. Normal enrichment targets require Spotify playability, persistent track eligibility, and `languageEligible=true`; this accepts unknown/unclassified tracks plus classified `en`, `pl`, and `es`, while rejecting classified other languages. Candidate difficulty remains unknown until verified Soundcharts stream counts are returned.
 
-The default reporting target is 10 ranked tracks per active category/difficulty cell. `--target-per-cell=N` changes reporting only and never candidate selection. Use `--limit=N` or `--verbose` to adjust output. Previously resolved groups that still have no audience value are reported but excluded by default; include them deliberately with `--include-cached-unranked`.
+The default reporting target is 10 ranked tracks per active category/difficulty cell. `--target-per-cell=N` changes reporting only and never candidate selection. Use `--limit=N` or `--verbose` to adjust output. Previously resolved groups that still have no audience value are reported but excluded by default; include them deliberately with `--include-cached-unranked`. Definitive resolver misses are stored separately in `soundchartsNotFoundAt` and excluded when every current group target is marked; retry them only with `--include-not-found`.
 
 Obvious non-song-like recording groups are also excluded from planning and enrichment by default. The conservative rules cover explicit skit, interview/entrevista, commentary, spoken-word, dialogue, and voice-memo/note markers after case, punctuation, diacritic, and whitespace normalization. Generic musical terms such as intro, outro, instrumental, mix, remix, live, demo, edit, remaster, and version are not excluded. `The Interview` remains an explicit eligible exact title; other interview markers at a title boundary are excluded as a documented conservative tradeoff. Use `--include-non-songlike` for deliberate debugging or manual review; the default exclusion is recommended for normal enrichment.
 
@@ -201,6 +201,12 @@ npm run streams:enrich:soundcharts -- --limit 100 --refresh
 ```
 
 Resolved songs without audience data retain a null stream count and difficulty. The Soundcharts UUID is cached so a deliberate later attempt can skip identifier resolution; these cached-unranked groups remain excluded unless `--include-cached-unranked` is supplied.
+
+A definitive NOT FOUND after the normal Spotify-ID and ISRC resolution path marks exactly the current recording group's enrichment target IDs. It does not mark transient failures, malformed responses, quota/rate-limit stops, or audience-unavailable resolutions. A successful explicit retry clears the marker whether it obtains a stream count or only resolves a UUID. To record a known historical miss locally without contacting Soundcharts, use a stable member Spotify ID:
+
+```powershell
+npm run streams:mark-soundcharts-not-found -- --spotify-track-id=0nLzyPto8nnKdf45IZP9eU
+```
 
 Fresh song resolution also retains optional Soundcharts `releaseDate` and normalized root/subgenre metadata from that same resolver response, so capturing it costs no additional request. Metadata is propagated to every local Spotify version in the recording group. A group using an already-cached UUID does not perform another resolution merely to fill missing metadata, so older enriched rows may legitimately remain null.
 

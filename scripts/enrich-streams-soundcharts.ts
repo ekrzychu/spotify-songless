@@ -13,6 +13,7 @@ import {
   type PlannedEnrichmentGroup,
 } from "../src/lib/streams/enrichment-selection";
 import { enrichRecordingGroup } from "../src/lib/streams/soundcharts-enrichment";
+import { recordSoundchartsNotFoundFailure } from "../src/lib/streams/soundcharts-not-found";
 import { SoundchartsStreamCountProvider } from "../src/lib/streams/soundcharts-provider";
 
 const DEFAULT_QUOTA_RESERVE = 50;
@@ -136,6 +137,7 @@ async function main(): Promise<void> {
       streamCount: true,
       streamCountSource: true,
       soundchartsUuid: true,
+      soundchartsNotFoundAt: true,
       difficulty: true,
       playable: true,
       gameEligible: true,
@@ -173,6 +175,7 @@ async function main(): Promise<void> {
     `Mode: ${options.canary ? "CANARY" : options.refresh ? "refresh Soundcharts-owned values and fill missing" : "fill missing only"}`,
     `Target per gameplay cell (reporting only): ${options.targetPerCell}`,
     `Include cached unranked: ${options.includeCachedUnranked ? "yes" : "no"}`,
+    `Include previously not found: ${options.includeNotFound ? "yes" : "no"}`,
     `Include obvious non-song-like groups: ${options.includeNonSonglike ? "yes" : "no"}`,
     `Quota reserve: ${reserve}`,
     `Customer API request budget: ${options.maxApiRequests}`,
@@ -209,6 +212,7 @@ async function main(): Promise<void> {
             console.log("Status: AUDIENCE UNAVAILABLE");
           }
         } catch (error) {
+          await recordSoundchartsNotFoundFailure(error, group);
           const code = errorCode(error);
           const stopReason = stopReasonFor(code);
           if (stopReason) {

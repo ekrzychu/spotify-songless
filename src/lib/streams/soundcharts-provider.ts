@@ -9,6 +9,13 @@ import { summarizeSpotifyStreams } from "@/lib/streams/spotify-stream-aggregatio
 
 export type SoundchartsResolutionSource = "cached" | "spotify" | "isrc";
 
+export class DefinitiveSoundchartsNotFoundError extends SoundchartsApiError {
+  constructor(error: SoundchartsApiError) {
+    super("not_found", error.status, error.apiMessage);
+    this.name = "DefinitiveSoundchartsNotFoundError";
+  }
+}
+
 export type SoundchartsStreamCountResult = {
   soundchartsUuid: string;
   streamCount: number | null;
@@ -50,9 +57,17 @@ export class SoundchartsStreamCountProvider implements StreamCountProvider {
         resolution = await this.client.getSongBySpotifyId(track.spotifyTrackId);
         resolutionSource = "spotify";
       } catch (error) {
-        if (!(error instanceof SoundchartsApiError) || error.code !== "not_found" || !track.isrc) throw error;
+        if (!(error instanceof SoundchartsApiError) || error.code !== "not_found") throw error;
+        if (!track.isrc) throw new DefinitiveSoundchartsNotFoundError(error);
         this.assertQuotaReserve();
-        resolution = await this.client.getSongByIsrc(track.isrc);
+        try {
+          resolution = await this.client.getSongByIsrc(track.isrc);
+        } catch (isrcError) {
+          if (isrcError instanceof SoundchartsApiError && isrcError.code === "not_found") {
+            throw new DefinitiveSoundchartsNotFoundError(isrcError);
+          }
+          throw isrcError;
+        }
         resolutionSource = "isrc";
       }
       soundchartsUuid = resolution.uuid;

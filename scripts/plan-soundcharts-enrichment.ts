@@ -21,6 +21,7 @@ async function main(): Promise<void> {
         streamCount: true,
         streamCountSource: true,
         soundchartsUuid: true,
+        soundchartsNotFoundAt: true,
         difficulty: true,
         playable: true,
         gameEligible: true,

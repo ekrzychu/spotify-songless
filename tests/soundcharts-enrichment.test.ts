@@ -20,6 +20,7 @@ const representative: EnrichmentTrackCandidate = {
   streamCount: null,
   streamCountSource: null,
   soundchartsUuid: null,
+  soundchartsNotFoundAt: null,
   difficulty: null,
   playable: true,
   gameEligible: true,
@@ -76,6 +77,7 @@ describe("Soundcharts database enrichment", () => {
       },
       data: {
         soundchartsUuid: "soundcharts-uuid",
+        soundchartsNotFoundAt: null,
         soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
         soundchartsGenresJson: JSON.stringify([{ root: "Pop", sub: ["Art Pop"] }]),
         streamCount: 1_000_000_000n,
@@ -114,6 +116,7 @@ describe("Soundcharts database enrichment", () => {
       },
       data: {
         soundchartsUuid: "soundcharts-uuid",
+        soundchartsNotFoundAt: null,
         soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
         soundchartsGenresJson: JSON.stringify([{ root: "Pop", sub: ["Art Pop"] }]),
       },

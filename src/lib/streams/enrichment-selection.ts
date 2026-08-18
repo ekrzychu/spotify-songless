@@ -33,6 +33,7 @@ export type EnrichmentTrackCandidate = {
   streamCount: bigint | null;
   streamCountSource: string | null;
   soundchartsUuid: string | null;
+  soundchartsNotFoundAt: Date | null;
   difficulty: string | null;
   playable: boolean;
   gameEligible: boolean;
@@ -79,6 +80,7 @@ export type SoundchartsSelectionOptions = {
   limit: number;
   targetPerCell: number;
   includeCachedUnranked: boolean;
+  includeNotFound: boolean;
   includeNonSonglike: boolean;
   refresh: boolean;
 };
@@ -98,10 +100,12 @@ export type SoundchartsEnrichmentPlan = {
   unplayableRankedTracks: number;
   unrankedTracks: number;
   targetPerCell: number;
+  includeNotFound: boolean;
   coverage: RankedCoverageMatrix;
   underfilledCells: UnderfilledCell[];
   freshUnrankedGroups: number;
   cachedUnrankedGroups: number;
+  previouslyNotFoundGroups: number;
   conflictingCachedUuidGroups: number;
   excludedNonSonglikeGroups: number;
   excludedNonSonglikeByReason: Record<TrackQualityReason, number>;
@@ -238,13 +242,20 @@ export function buildSoundchartsEnrichmentPlan(
     group.cachedSoundchartsUuid !== null
     && group.targetTrackIds.every((id) => targetById.get(id)?.streamCount === null)
   );
+  const isPreviouslyNotFound = (group: EnrichmentRecordingGroup): boolean => (
+    group.targetTrackIds.every((id) => targetById.get(id)?.soundchartsNotFoundAt != null)
+  );
   const conflictingCachedUuidGroups = groups.filter((group) => group.hasConflictingCachedUuids).length;
   const cachedUnrankedGroups = groups.filter((group) => (
     !group.hasConflictingCachedUuids && isCachedUnranked(group)
   )).length;
+  const previouslyNotFoundGroups = groups.filter((group) => (
+    !group.hasConflictingCachedUuids && isPreviouslyNotFound(group)
+  )).length;
   const freshUnrankedGroups = groups.filter((group) => (
     !group.hasConflictingCachedUuids
     && group.cachedSoundchartsUuid === null
+    && !isPreviouslyNotFound(group)
     && group.targetTrackIds.every((id) => targetById.get(id)?.streamCount === null)
   )).length;
   const qualityByGroup = new Map(groups.map((group) => [
@@ -262,6 +273,7 @@ export function buildSoundchartsEnrichmentPlan(
   const eligible = groups.filter((group) => (
     !group.hasConflictingCachedUuids
     && (options.includeCachedUnranked || !isCachedUnranked(group))
+    && (options.includeNotFound || !isPreviouslyNotFound(group))
     && (options.includeNonSonglike || qualityByGroup.get(group.key)?.eligible !== false)
   ));
 
@@ -304,10 +316,12 @@ export function buildSoundchartsEnrichmentPlan(
     unplayableRankedTracks: tracks.filter((track) => isRawRanked(track) && !track.playable).length,
     unrankedTracks: tracks.length - rawRankedTracks,
     targetPerCell: options.targetPerCell,
+    includeNotFound: options.includeNotFound,
     coverage,
     underfilledCells,
     freshUnrankedGroups,
     cachedUnrankedGroups,
+    previouslyNotFoundGroups,
     conflictingCachedUuidGroups,
     excludedNonSonglikeGroups,
     excludedNonSonglikeByReason,
@@ -348,6 +362,8 @@ export function formatSoundchartsEnrichmentPlan(
     "",
     `Fresh unranked recording groups: ${plan.freshUnrankedGroups}`,
     `Previously resolved but still unranked: ${plan.cachedUnrankedGroups}`,
+    `Previously not found: ${plan.previouslyNotFoundGroups}`,
+    `Include previously not found: ${plan.includeNotFound ? "yes" : "no"}`,
     `Groups with conflicting cached UUIDs: ${plan.conflictingCachedUuidGroups}`,
     `Excluded non-song-like recording groups: ${plan.excludedNonSonglikeGroups}`,
     ...TRACK_QUALITY_REASONS.map((reason) => `  ${reason}: ${plan.excludedNonSonglikeByReason[reason]}`),
@@ -409,7 +425,7 @@ export function formatSoundchartsEnrichmentPlan(
 
 export function parseSoundchartsPlanningOptions(args: readonly string[]): SoundchartsPlanningOptions {
   const values = parseArguments(args, new Set(["limit", "target-per-cell"]), new Set([
-    "include-cached-unranked", "include-non-songlike", "verbose",
+    "include-cached-unranked", "include-not-found", "include-non-songlike", "verbose",
   ]));
   return {
     limit: parseBoundedInteger(values.values.get("limit"), DEFAULT_ENRICHMENT_LIMIT, 1, MAX_PLAN_LIMIT, "limit"),
@@ -417,6 +433,7 @@ export function parseSoundchartsPlanningOptions(args: readonly string[]): Soundc
       values.values.get("target-per-cell"), DEFAULT_TARGET_PER_CELL, 1, 10_000, "target-per-cell",
     ),
     includeCachedUnranked: values.flags.has("include-cached-unranked"),
+    includeNotFound: values.flags.has("include-not-found"),
     includeNonSonglike: values.flags.has("include-non-songlike"),
     refresh: false,
     verbose: values.flags.has("verbose"),
@@ -426,7 +443,7 @@ export function parseSoundchartsPlanningOptions(args: readonly string[]): Soundc
 export function parseSoundchartsExecutionOptions(args: readonly string[]): SoundchartsExecutionOptions {
   const values = parseArguments(args, new Set([
     "limit", "target-per-cell", "max-api-requests",
-  ]), new Set(["include-cached-unranked", "include-non-songlike", "refresh", "canary"]));
+  ]), new Set(["include-cached-unranked", "include-not-found", "include-non-songlike", "refresh", "canary"]));
   const canary = values.flags.has("canary");
   const limit = parseBoundedInteger(
     values.values.get("limit"), DEFAULT_ENRICHMENT_LIMIT, 1, MAX_ENRICHMENT_LIMIT, "limit",
@@ -440,6 +457,7 @@ export function parseSoundchartsExecutionOptions(args: readonly string[]): Sound
       values.values.get("target-per-cell"), DEFAULT_TARGET_PER_CELL, 1, 10_000, "target-per-cell",
     ),
     includeCachedUnranked: values.flags.has("include-cached-unranked"),
+    includeNotFound: values.flags.has("include-not-found"),
     includeNonSonglike: values.flags.has("include-non-songlike"),
     refresh: canary ? false : values.flags.has("refresh"),
     maxApiRequests: canary ? CANARY_MAX_API_REQUESTS : maxApiRequests,

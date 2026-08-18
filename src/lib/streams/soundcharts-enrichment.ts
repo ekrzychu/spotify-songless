@@ -104,6 +104,7 @@ export async function enrichRecordingGroup(
       where,
       data: {
         soundchartsUuid: providerResult.soundchartsUuid,
+        soundchartsNotFoundAt: null,
         ...soundchartsMetadataUpdate(providerResult),
       },
     });
@@ -121,6 +122,7 @@ export async function enrichRecordingGroup(
     where,
     data: {
       soundchartsUuid: providerResult.soundchartsUuid,
+      soundchartsNotFoundAt: null,
       ...soundchartsMetadataUpdate(providerResult),
       streamCount: BigInt(providerResult.streamCount),
       difficulty,
