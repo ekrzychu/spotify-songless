@@ -1,4 +1,9 @@
 import { CATEGORIES } from "@/lib/catalog/category-config";
+import {
+  classifyTrackQuality,
+  TRACK_QUALITY_REASONS,
+  type TrackQualityReason,
+} from "@/lib/catalog/track-quality";
 import { DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 import { normalizeIsrc } from "@/lib/streams/import-normalizer";
 import { DIFFICULTIES, type Difficulty } from "@/types/game";
@@ -69,6 +74,7 @@ export type SoundchartsSelectionOptions = {
   limit: number;
   targetPerCell: number;
   includeCachedUnranked: boolean;
+  includeNonSonglike: boolean;
   refresh: boolean;
 };
 
@@ -89,6 +95,8 @@ export type SoundchartsEnrichmentPlan = {
   freshUnrankedGroups: number;
   cachedUnrankedGroups: number;
   conflictingCachedUuidGroups: number;
+  excludedNonSonglikeGroups: number;
+  excludedNonSonglikeByReason: Record<TrackQualityReason, number>;
   eligibleGroups: number;
   selectedGroups: PlannedEnrichmentGroup[];
   localTracksRepresented: number;
@@ -217,9 +225,22 @@ export function buildSoundchartsEnrichmentPlan(
     && group.cachedSoundchartsUuid === null
     && group.targetTrackIds.every((id) => targetById.get(id)?.streamCount === null)
   )).length;
+  const qualityByGroup = new Map(groups.map((group) => [
+    group.key,
+    classifyRecordingGroupQuality(group),
+  ]));
+  const excludedNonSonglikeByReason = Object.fromEntries(
+    TRACK_QUALITY_REASONS.map((reason) => [
+      reason,
+      [...qualityByGroup.values()].filter((classification) => classification.reason === reason).length,
+    ]),
+  ) as Record<TrackQualityReason, number>;
+  const excludedNonSonglikeGroups = [...qualityByGroup.values()]
+    .filter((classification) => !classification.eligible).length;
   const eligible = groups.filter((group) => (
     !group.hasConflictingCachedUuids
     && (options.includeCachedUnranked || !isCachedUnranked(group))
+    && (options.includeNonSonglike || qualityByGroup.get(group.key)?.eligible !== false)
   ));
 
   const selectedGroups = eligible
@@ -268,6 +289,8 @@ export function buildSoundchartsEnrichmentPlan(
     freshUnrankedGroups,
     cachedUnrankedGroups,
     conflictingCachedUuidGroups,
+    excludedNonSonglikeGroups,
+    excludedNonSonglikeByReason,
     eligibleGroups: eligible.length,
     selectedGroups,
     localTracksRepresented: selectedGroups.reduce((total, group) => total + group.tracks.length, 0),
@@ -303,6 +326,8 @@ export function formatSoundchartsEnrichmentPlan(
     `Fresh unranked recording groups: ${plan.freshUnrankedGroups}`,
     `Previously resolved but still unranked: ${plan.cachedUnrankedGroups}`,
     `Groups with conflicting cached UUIDs: ${plan.conflictingCachedUuidGroups}`,
+    `Excluded non-song-like recording groups: ${plan.excludedNonSonglikeGroups}`,
+    ...TRACK_QUALITY_REASONS.map((reason) => `  ${reason}: ${plan.excludedNonSonglikeByReason[reason]}`),
     `Eligible groups: ${plan.eligibleGroups}`,
     `Selected groups: ${plan.selectedGroups.length}`,
     `Local Spotify tracks represented: ${plan.localTracksRepresented}`,
@@ -360,7 +385,7 @@ export function formatSoundchartsEnrichmentPlan(
 
 export function parseSoundchartsPlanningOptions(args: readonly string[]): SoundchartsPlanningOptions {
   const values = parseArguments(args, new Set(["limit", "target-per-cell"]), new Set([
-    "include-cached-unranked", "verbose",
+    "include-cached-unranked", "include-non-songlike", "verbose",
   ]));
   return {
     limit: parseBoundedInteger(values.values.get("limit"), DEFAULT_ENRICHMENT_LIMIT, 1, MAX_PLAN_LIMIT, "limit"),
@@ -368,6 +393,7 @@ export function parseSoundchartsPlanningOptions(args: readonly string[]): Soundc
       values.values.get("target-per-cell"), DEFAULT_TARGET_PER_CELL, 1, 10_000, "target-per-cell",
     ),
     includeCachedUnranked: values.flags.has("include-cached-unranked"),
+    includeNonSonglike: values.flags.has("include-non-songlike"),
     refresh: false,
     verbose: values.flags.has("verbose"),
   };
@@ -376,7 +402,7 @@ export function parseSoundchartsPlanningOptions(args: readonly string[]): Soundc
 export function parseSoundchartsExecutionOptions(args: readonly string[]): SoundchartsExecutionOptions {
   const values = parseArguments(args, new Set([
     "limit", "target-per-cell", "max-api-requests",
-  ]), new Set(["include-cached-unranked", "refresh", "canary"]));
+  ]), new Set(["include-cached-unranked", "include-non-songlike", "refresh", "canary"]));
   const canary = values.flags.has("canary");
   const limit = parseBoundedInteger(
     values.values.get("limit"), DEFAULT_ENRICHMENT_LIMIT, 1, MAX_ENRICHMENT_LIMIT, "limit",
@@ -390,10 +416,26 @@ export function parseSoundchartsExecutionOptions(args: readonly string[]): Sound
       values.values.get("target-per-cell"), DEFAULT_TARGET_PER_CELL, 1, 10_000, "target-per-cell",
     ),
     includeCachedUnranked: values.flags.has("include-cached-unranked"),
+    includeNonSonglike: values.flags.has("include-non-songlike"),
     refresh: canary ? false : values.flags.has("refresh"),
     maxApiRequests: canary ? CANARY_MAX_API_REQUESTS : maxApiRequests,
     canary,
   };
+}
+
+function classifyRecordingGroupQuality(group: EnrichmentRecordingGroup): {
+  eligible: boolean; reason: TrackQualityReason | null;
+} {
+  const targetIds = new Set(group.targetTrackIds);
+  const classifications = group.tracks
+    .filter((track) => targetIds.has(track.id))
+    .map((track) => classifyTrackQuality(track.title));
+  for (const reason of TRACK_QUALITY_REASONS) {
+    if (classifications.some((classification) => classification.reason === reason)) {
+      return { eligible: false, reason };
+    }
+  }
+  return { eligible: true, reason: null };
 }
 
 function emptyDifficultyCoverage(): DifficultyCoverage {

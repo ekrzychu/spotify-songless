@@ -164,6 +164,7 @@ async function main(): Promise<void> {
     `Mode: ${options.canary ? "CANARY" : options.refresh ? "refresh Soundcharts-owned values and fill missing" : "fill missing only"}`,
     `Target per gameplay cell: ${options.targetPerCell}`,
     `Include cached unranked: ${options.includeCachedUnranked ? "yes" : "no"}`,
+    `Include obvious non-song-like groups: ${options.includeNonSonglike ? "yes" : "no"}`,
     `Quota reserve: ${reserve}`,
     `Customer API request budget: ${options.maxApiRequests}`,
     `Selected recording groups: ${groups.length}`,

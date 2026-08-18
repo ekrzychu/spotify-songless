@@ -87,6 +87,7 @@ The OAuth flow uses Authorization Code with PKCE, short-lived integrity-protecte
 
 ```powershell
 npm run catalog:status
+npm run catalog:audit-genres
 npm run catalog:populate -- --plan
 npm run catalog:populate -- --target=20000 --max-requests=500
 ```
@@ -118,6 +119,8 @@ Available controls are:
 `--max-per-shard` can be increased on a later run without resetting progress. Use `--reset-checkpoint` only when intentionally changing checkpoint identity such as the market or year range. Plan mode reads only the local database and checkpoint; it does not request a Spotify access token or call Spotify Search.
 
 `npm run catalog:status` is also local-only. It reports total/playable and ranked/unranked counts plus active genre and decade pool coverage. Historical removed-category relations are not included in active pool reporting.
+
+`npm run catalog:audit-genres` is a read-only SQLite audit. It contacts neither Spotify nor Soundcharts, requests no OAuth token, and never modifies category relations. The report shows active-genre overlap counts, samples of classical crossover associations, and a conservative title-based track-quality audit. Overlaps are evidence for review, not automatic declarations that a relation is incorrect. Historical relations do not contain Spotify search-shard provenance, so the audit does not invent it.
 
 Catalog population does not spend Soundcharts quota, does not call Soundcharts, does not assign difficulty, and does not invent stream counts. New tracks remain unranked until verified stream counts are imported. A fixed request count cannot guarantee 20,000 tracks because Spotify page exhaustion and duplicate track IDs vary by shard.
 
@@ -154,6 +157,8 @@ npm run streams:plan:soundcharts -- --limit=100
 The planner reads SQLite only: it requests no OAuth token, makes no Spotify or Soundcharts requests, and performs no database writes. It prints the current category-by-difficulty gameplay matrix, thin cells, selected recording groups, and a customer HTTP request estimate. Candidate difficulty remains unknown until verified Soundcharts stream counts are returned.
 
 The default planning target is 10 ranked tracks per active category/difficulty cell. Use `--target-per-cell=N`, `--limit=N`, or `--verbose` to adjust the report. Previously resolved groups that still have no audience value are reported but excluded by default; include them deliberately with `--include-cached-unranked`.
+
+Obvious non-song-like recording groups are also excluded from planning and enrichment by default. The conservative rules cover explicit skit, interview/entrevista, commentary, spoken-word, dialogue, and voice-memo/note markers after case, punctuation, diacritic, and whitespace normalization. Generic musical terms such as intro, outro, instrumental, mix, remix, live, demo, edit, remaster, and version are not excluded. `The Interview` remains an explicit eligible exact title; other interview markers at a title boundary are excluded as a documented conservative tradeoff. Use `--include-non-songlike` for deliberate debugging or manual review; the default exclusion is recommended for normal enrichment.
 
 Start real enrichment with one canary recording group:
 

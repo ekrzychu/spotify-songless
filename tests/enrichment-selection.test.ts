@@ -37,6 +37,7 @@ const options: SoundchartsSelectionOptions = {
   limit: 100,
   targetPerCell: 10,
   includeCachedUnranked: false,
+  includeNonSonglike: false,
   refresh: false,
 };
 
@@ -141,7 +142,11 @@ describe("adaptive Soundcharts planning", () => {
   });
 
   it("uses one shared selector for plan and execution-equivalent options", () => {
-    const candidates = [track("a", ["pop", "80s"]), track("b", ["rock", "90s"])];
+    const candidates = [
+      track("a", ["pop", "80s"]),
+      track("b", ["rock", "90s"]),
+      track("skit", ["hip-hop", "90s"], { title: "Track Name (SKIT)" }),
+    ];
     const planningOptions = parseSoundchartsPlanningOptions([
       "--limit=1", "--target-per-cell=7", "--include-cached-unranked",
     ]);
@@ -152,15 +157,31 @@ describe("adaptive Soundcharts planning", () => {
     const execution = buildSoundchartsEnrichmentPlan(candidates, executionOptions);
     expect(planning.selectedGroups.map((group) => group.key))
       .toEqual(execution.selectedGroups.map((group) => group.key));
+    expect(planning.selectedGroups.some((group) => group.representative.id === "skit")).toBe(false);
+
+    const planningOverride = buildSoundchartsEnrichmentPlan(candidates, {
+      ...planningOptions,
+      includeNonSonglike: true,
+      limit: 100,
+    });
+    const executionOverride = buildSoundchartsEnrichmentPlan(candidates, {
+      ...executionOptions,
+      includeNonSonglike: true,
+      limit: 100,
+    });
+    expect(planningOverride.selectedGroups.map((group) => group.key))
+      .toEqual(executionOverride.selectedGroups.map((group) => group.key));
+    expect(planningOverride.selectedGroups.some((group) => group.representative.id === "skit")).toBe(true);
   });
 
   it("allows large zero-network plans while validating planning controls", () => {
     expect(parseSoundchartsPlanningOptions([
-      "--limit=500", "--target-per-cell=12", "--include-cached-unranked", "--verbose",
+      "--limit=500", "--target-per-cell=12", "--include-cached-unranked", "--include-non-songlike", "--verbose",
     ])).toMatchObject({
       limit: 500,
       targetPerCell: 12,
       includeCachedUnranked: true,
+      includeNonSonglike: true,
       refresh: false,
       verbose: true,
     });
@@ -195,5 +216,22 @@ describe("adaptive Soundcharts planning", () => {
     expect(parseSoundchartsExecutionOptions([
       "--canary", "--limit=100", "--max-api-requests=999", "--refresh",
     ])).toMatchObject({ limit: 1, maxApiRequests: 3, refresh: false, canary: true });
+  });
+
+  it("reports quality exclusions by reason and supports the shared override", () => {
+    const candidates = [
+      track("music", ["pop", "80s"], { title: "Boys Don't Cry" }),
+      track("skit", ["hip-hop", "90s"], { title: "Track Name [SKIT]" }),
+      track("interview", ["hip-hop", "90s"], { title: "Vinheta (Entrevistas)" }),
+    ];
+    const defaultPlan = buildSoundchartsEnrichmentPlan(candidates, options);
+    const overridePlan = buildSoundchartsEnrichmentPlan(candidates, { ...options, includeNonSonglike: true });
+
+    expect(defaultPlan).toMatchObject({
+      excludedNonSonglikeGroups: 2,
+      excludedNonSonglikeByReason: { skit: 1, interview: 1 },
+    });
+    expect(defaultPlan.selectedGroups.map((group) => group.representative.id)).toEqual(["music"]);
+    expect(overridePlan.selectedGroups).toHaveLength(3);
   });
 });
