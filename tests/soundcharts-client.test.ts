@@ -3,6 +3,7 @@ import {
   parseAccessTokenResponse,
   parseLatestSpotifyAudience,
   parseLatestSpotifyAudienceSnapshot,
+  parseSoundchartsSongResponse,
   parseSongUuidResponse,
   SoundchartsApiError,
   SoundchartsClient,
@@ -36,6 +37,32 @@ describe("Soundcharts response parsing", () => {
 
   it("parses a song UUID response", () => {
     expect(parseSongUuidResponse({ type: "song", object: { uuid: "song-uuid" } })).toBe("song-uuid");
+  });
+
+  it("retains normalized optional song metadata from a resolver response", () => {
+    expect(parseSoundchartsSongResponse({
+      type: "song",
+      object: {
+        uuid: "song-uuid",
+        releaseDate: "1980-09-08T00:00:00+00:00",
+        genres: [{ root: " Pop ", sub: ["Art Pop", "Art Pop", ""] }],
+      },
+    })).toEqual({
+      uuid: "song-uuid",
+      releaseDate: "1980-09-08T00:00:00+00:00",
+      genres: [{ root: "Pop", sub: ["Art Pop"] }],
+    });
+  });
+
+  it("resolves a UUID when optional song metadata is absent or malformed", () => {
+    expect(parseSoundchartsSongResponse({ object: { uuid: "song-uuid" } })).toEqual({
+      uuid: "song-uuid",
+      releaseDate: null,
+      genres: null,
+    });
+    expect(parseSoundchartsSongResponse({
+      object: { uuid: "song-uuid", releaseDate: "not-a-date", genres: "Pop" },
+    })).toEqual({ uuid: "song-uuid", releaseDate: null, genres: null });
   });
 
   it("selects the latest matching Spotify audience point", () => {

@@ -32,12 +32,23 @@ describe("random track selection", () => {
     });
     expect(mocks.count).toHaveBeenLastCalledWith({ where: {
       playable: true,
+      gameEligible: true,
       streamCount: { not: null },
       difficulty: "hard",
       categories: { some: { categoryId: "rock" } },
       id: { notIn: ["heard-track"] },
     } });
     expect(mocks.findTrack).toHaveBeenCalledWith(expect.objectContaining({ skip: 0 }));
+  });
+
+  it("requires game eligibility even for a playable ranked track", async () => {
+    await selectRandomTrack({ sessionId: "session", category: "all", difficulty: "impossible" });
+    expect(mocks.count.mock.calls[0]?.[0].where).toMatchObject({
+      playable: true,
+      gameEligible: true,
+      streamCount: { not: null },
+      difficulty: "impossible",
+    });
   });
 
   it("does not require a category association for All", async () => {

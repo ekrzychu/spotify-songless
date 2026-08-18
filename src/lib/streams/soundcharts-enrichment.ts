@@ -20,6 +20,19 @@ export type SoundchartsEnrichmentResult = {
   providerResult: SoundchartsStreamCountResult;
 };
 
+function soundchartsMetadataUpdate(
+  result: SoundchartsStreamCountResult,
+): Pick<Prisma.GameTrackUpdateManyMutationInput, "soundchartsReleaseDate" | "soundchartsGenresJson"> {
+  return {
+    ...(result.soundchartsReleaseDate === null
+      ? {}
+      : { soundchartsReleaseDate: result.soundchartsReleaseDate }),
+    ...(result.soundchartsGenres === null
+      ? {}
+      : { soundchartsGenresJson: JSON.stringify(result.soundchartsGenres) }),
+  };
+}
+
 export async function enrichRecordingGroup(
   group: EnrichmentRecordingGroup,
   provider: SoundchartsEnrichmentProvider,
@@ -41,7 +54,10 @@ export async function enrichRecordingGroup(
   if (providerResult.streamCount === null) {
     await db.gameTrack.updateMany({
       where,
-      data: { soundchartsUuid: providerResult.soundchartsUuid },
+      data: {
+        soundchartsUuid: providerResult.soundchartsUuid,
+        ...soundchartsMetadataUpdate(providerResult),
+      },
     });
     return {
       status: "audience_unavailable",
@@ -56,6 +72,7 @@ export async function enrichRecordingGroup(
     where,
     data: {
       soundchartsUuid: providerResult.soundchartsUuid,
+      ...soundchartsMetadataUpdate(providerResult),
       streamCount: BigInt(providerResult.streamCount),
       difficulty,
       streamCountSource: "soundcharts",

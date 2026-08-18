@@ -134,6 +134,14 @@ npm run catalog:backfill-decades
 
 The backfill preserves genre associations, upserts the matching decade relation for release years from 1970 through 2029, removes stale decade relations, and prints the resulting count for every decade.
 
+Gameplay suitability is stored separately from Spotify playability. `playable` continues to mean that Spotify can play the track for the current workflow; `gameEligible` is derived from the conservative title-quality classifier and is required by normal round selection. After applying the additive schema fields with `npm run db:push`, reconcile all existing tracks locally with:
+
+```powershell
+npm run catalog:backfill-game-eligibility
+```
+
+This deterministic backfill reads and updates SQLite only. It reports scanned, eligible, excluded, updated, and per-reason counts. It changes only `gameEligible`; existing stream counts, difficulty, Soundcharts provenance, and category relations are preserved.
+
 ## Verify Soundcharts access
 
 To test Soundcharts resolution and Spotify audience access against 10 deterministic, unranked catalog tracks, run:
@@ -185,6 +193,16 @@ npm run streams:enrich:soundcharts -- --limit 100 --refresh
 ```
 
 Resolved songs without audience data retain a null stream count and difficulty. The Soundcharts UUID is cached so a deliberate later attempt can skip identifier resolution; these cached-unranked groups remain excluded unless `--include-cached-unranked` is supplied.
+
+Fresh song resolution also retains optional Soundcharts `releaseDate` and normalized root/subgenre metadata from that same resolver response, so capturing it costs no additional request. Metadata is propagated to every local Spotify version in the recording group. A group using an already-cached UUID does not perform another resolution merely to fill missing metadata, so older enriched rows may legitimately remain null. Soundcharts metadata is provenance-specific evidence: it never overwrites Spotify release data or automatically changes `TrackCategory` genre/decade relations.
+
+Audit the stored evidence without network access or database writes:
+
+```powershell
+npm run catalog:audit-soundcharts-metadata
+```
+
+The SQLite-only report compares Spotify and Soundcharts release years/decades, lists the actual stored root genres and subgenres, and shows conservative potential genre mismatches for ranked tracks. It does not invent mappings or mutate category relations.
 
 ## Import verified lifetime stream counts
 

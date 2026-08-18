@@ -44,7 +44,8 @@ describe("catalog metadata upsert preservation", () => {
     const update = mocks.upsertTrack.mock.calls[0]?.[0].update as Record<string, unknown>;
     expect(update).toMatchObject({ title: "Rediscovered", releaseDate: "2020-01-02" });
     for (const field of [
-      "streamCount", "difficulty", "soundchartsUuid", "streamCountSource", "streamCountUpdatedAt",
+      "streamCount", "difficulty", "soundchartsUuid", "soundchartsReleaseDate",
+      "soundchartsGenresJson", "streamCountSource", "streamCountUpdatedAt",
     ]) {
       expect(update).not.toHaveProperty(field);
     }
@@ -52,5 +53,19 @@ describe("catalog metadata upsert preservation", () => {
       where: { trackId_categoryId: { trackId: "database-track", categoryId: "pop" } },
     }));
     expect(mocks.assignDerivedCategories).toHaveBeenCalledWith("database-track", "2020-01-02");
+  });
+
+  it("derives gameplay eligibility on every Spotify create or refresh", async () => {
+    await upsertCatalogTrack(track, "pop");
+    expect(mocks.upsertTrack.mock.calls[0]?.[0]).toMatchObject({
+      create: { gameEligible: true },
+      update: { gameEligible: true },
+    });
+
+    await upsertCatalogTrack({ ...track, id: "another-spotify-id-000", name: "Some Interview (SKIT)" }, "pop");
+    expect(mocks.upsertTrack.mock.calls[1]?.[0]).toMatchObject({
+      create: { gameEligible: false },
+      update: { gameEligible: false },
+    });
   });
 });

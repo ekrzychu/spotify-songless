@@ -8,27 +8,30 @@ datasource db {
 }
 
 model GameTrack {
-  id                   String                    @id @default(cuid())
-  spotifyTrackId       String                    @unique
-  spotifyUri           String
-  isrc                 String?
-  title                String
-  artistNames          String
-  artistsJson          String
-  albumName            String
-  releaseDate          String?
-  streamCount          BigInt?
-  difficulty           String?
-  soundchartsUuid      String?
-  streamCountSource    String?
-  streamCountUpdatedAt DateTime?
-  playable             Boolean                   @default(true)
-  spotifyUrl           String
-  createdAt            DateTime                  @default(now())
-  updatedAt            DateTime                  @updatedAt
-  categories           TrackCategory[]
-  rounds               GameRound[]
-  unavailableIn        SessionUnavailableTrack[]
+  id                     String                    @id @default(cuid())
+  spotifyTrackId         String                    @unique
+  spotifyUri             String
+  isrc                   String?
+  title                  String
+  artistNames            String
+  artistsJson            String
+  albumName              String
+  releaseDate            String?
+  streamCount            BigInt?
+  difficulty             String?
+  soundchartsUuid        String?
+  soundchartsReleaseDate String?
+  soundchartsGenresJson  String?
+  streamCountSource      String?
+  streamCountUpdatedAt   DateTime?
+  playable               Boolean                   @default(true)
+  gameEligible           Boolean                   @default(true)
+  spotifyUrl             String
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  categories             TrackCategory[]
+  rounds                 GameRound[]
+  unavailableIn          SessionUnavailableTrack[]
 
   @@index([difficulty, playable])
   @@index([isrc])

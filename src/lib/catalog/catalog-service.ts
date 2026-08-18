@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import type { SpotifyTrack } from "@/lib/spotify/api";
 import { normalizeIsrc } from "@/lib/streams/import-normalizer";
 import { assignDerivedCategories } from "@/lib/catalog/derived-categories";
+import { deriveGameEligibility } from "@/lib/catalog/game-eligibility";
 
 export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string): Promise<"created" | "updated"> {
   const data = {
@@ -14,6 +15,7 @@ export async function upsertCatalogTrack(track: SpotifyTrack, categoryId: string
     albumName: track.album.name,
     releaseDate: track.album.release_date ?? null,
     playable: track.is_playable !== false,
+    gameEligible: deriveGameEligibility(track.name).gameEligible,
     spotifyUrl: track.external_urls.spotify,
   } satisfies Omit<Prisma.GameTrackUncheckedCreateInput, "spotifyTrackId">;
 

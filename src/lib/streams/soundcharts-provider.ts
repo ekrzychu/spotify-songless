@@ -1,4 +1,9 @@
-import { SoundchartsApiError, type SpotifyAudienceSnapshot } from "@/lib/soundcharts/client";
+import {
+  SoundchartsApiError,
+  type SoundchartsSongGenre,
+  type SoundchartsSongResolution,
+  type SpotifyAudienceSnapshot,
+} from "@/lib/soundcharts/client";
 import type { StreamCountLookup, StreamCountProvider } from "@/lib/streams/provider";
 import { summarizeSpotifyStreams } from "@/lib/streams/spotify-stream-aggregation";
 
@@ -11,12 +16,14 @@ export type SoundchartsStreamCountResult = {
   identifierCount: number;
   uniqueValueCount: number;
   resolutionSource: SoundchartsResolutionSource;
+  soundchartsReleaseDate: string | null;
+  soundchartsGenres: SoundchartsSongGenre[] | null;
 };
 
 export interface SoundchartsProviderClient {
   readonly quotaRemaining: number | null;
-  getSongBySpotifyId(spotifyTrackId: string): Promise<string>;
-  getSongByIsrc(isrc: string): Promise<string>;
+  getSongBySpotifyId(spotifyTrackId: string): Promise<SoundchartsSongResolution>;
+  getSongByIsrc(isrc: string): Promise<SoundchartsSongResolution>;
   getLatestSpotifyAudienceSnapshot(soundchartsSongUuid: string): Promise<SpotifyAudienceSnapshot | null>;
 }
 
@@ -34,17 +41,23 @@ export class SoundchartsStreamCountProvider implements StreamCountProvider {
     this.assertQuotaReserve();
     let soundchartsUuid = track.soundchartsUuid ?? null;
     let resolutionSource: SoundchartsResolutionSource = "cached";
+    let soundchartsReleaseDate: string | null = null;
+    let soundchartsGenres: SoundchartsSongGenre[] | null = null;
 
     if (!soundchartsUuid) {
+      let resolution: SoundchartsSongResolution;
       try {
-        soundchartsUuid = await this.client.getSongBySpotifyId(track.spotifyTrackId);
+        resolution = await this.client.getSongBySpotifyId(track.spotifyTrackId);
         resolutionSource = "spotify";
       } catch (error) {
         if (!(error instanceof SoundchartsApiError) || error.code !== "not_found" || !track.isrc) throw error;
         this.assertQuotaReserve();
-        soundchartsUuid = await this.client.getSongByIsrc(track.isrc);
+        resolution = await this.client.getSongByIsrc(track.isrc);
         resolutionSource = "isrc";
       }
+      soundchartsUuid = resolution.uuid;
+      soundchartsReleaseDate = resolution.releaseDate;
+      soundchartsGenres = resolution.genres;
       this.assertQuotaReserve();
     }
 
@@ -57,6 +70,8 @@ export class SoundchartsStreamCountProvider implements StreamCountProvider {
         identifierCount: 0,
         uniqueValueCount: 0,
         resolutionSource,
+        soundchartsReleaseDate,
+        soundchartsGenres,
       };
     }
     const aggregation = summarizeSpotifyStreams(snapshot.plots);
@@ -67,6 +82,8 @@ export class SoundchartsStreamCountProvider implements StreamCountProvider {
       identifierCount: aggregation.identifierCount,
       uniqueValueCount: aggregation.uniqueValueCount,
       resolutionSource,
+      soundchartsReleaseDate,
+      soundchartsGenres,
     };
   }
 

@@ -8,8 +8,16 @@ import {
 function client(overrides: Partial<SoundchartsProviderClient> = {}): SoundchartsProviderClient {
   return {
     quotaRemaining: 500,
-    getSongBySpotifyId: vi.fn().mockResolvedValue("resolved-uuid"),
-    getSongByIsrc: vi.fn().mockResolvedValue("isrc-uuid"),
+    getSongBySpotifyId: vi.fn().mockResolvedValue({
+      uuid: "resolved-uuid",
+      releaseDate: "1980-09-08T00:00:00+00:00",
+      genres: [{ root: "Pop", sub: ["Art Pop"] }],
+    }),
+    getSongByIsrc: vi.fn().mockResolvedValue({
+      uuid: "isrc-uuid",
+      releaseDate: null,
+      genres: null,
+    }),
     getLatestSpotifyAudienceSnapshot: vi.fn().mockResolvedValue({
       date: "2026-08-16T00:00:00+00:00",
       plots: [
@@ -41,6 +49,8 @@ describe("SoundchartsStreamCountProvider", () => {
       identifierCount: 3,
       uniqueValueCount: 2,
       resolutionSource: "cached",
+      soundchartsReleaseDate: null,
+      soundchartsGenres: null,
     });
   });
 
@@ -54,6 +64,7 @@ describe("SoundchartsStreamCountProvider", () => {
     expect(api.getSongByIsrc).toHaveBeenCalledWith("USABC1234567");
     expect(result.resolutionSource).toBe("isrc");
     expect(result.soundchartsUuid).toBe("isrc-uuid");
+    expect(result.soundchartsReleaseDate).toBeNull();
   });
 
   it("returns null for a resolved song with no audience", async () => {
@@ -64,6 +75,8 @@ describe("SoundchartsStreamCountProvider", () => {
       soundchartsUuid: "resolved-uuid",
       streamCount: null,
       audienceDate: null,
+      soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
+      soundchartsGenres: [{ root: "Pop", sub: ["Art Pop"] }],
     });
   });
 
@@ -84,7 +97,7 @@ describe("SoundchartsStreamCountProvider", () => {
       get quotaRemaining() { return remaining; },
       getSongBySpotifyId: vi.fn().mockImplementation(async () => {
         remaining = 50;
-        return "resolved-uuid";
+        return { uuid: "resolved-uuid", releaseDate: null, genres: null };
       }),
       getSongByIsrc: vi.fn(),
       getLatestSpotifyAudienceSnapshot: vi.fn(),

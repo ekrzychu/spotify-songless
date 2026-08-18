@@ -36,6 +36,17 @@ export type SpotifyAudienceSnapshot = {
   plots: unknown[];
 };
 
+export type SoundchartsSongGenre = {
+  root: string;
+  sub: string[];
+};
+
+export type SoundchartsSongResolution = {
+  uuid: string;
+  releaseDate: string | null;
+  genres: SoundchartsSongGenre[] | null;
+};
+
 export type SoundchartsClientOptions = {
   fetch?: FetchLike;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -88,12 +99,42 @@ export function parseAccessTokenResponse(payload: unknown): string {
   return accessToken;
 }
 
-export function parseSongUuidResponse(payload: unknown): string {
-  const uuid = asRecord(asRecord(payload)?.object)?.uuid;
-  if (typeof uuid !== "string" || uuid.length === 0) {
+export function parseSoundchartsSongResponse(payload: unknown): SoundchartsSongResolution {
+  const song = asRecord(asRecord(payload)?.object);
+  const uuid = typeof song?.uuid === "string" ? song.uuid.trim() : "";
+  if (uuid.length === 0) {
     throw new SoundchartsApiError("malformed_response", 200);
   }
-  return uuid;
+
+  const rawReleaseDate = song?.releaseDate;
+  const releaseDate = typeof rawReleaseDate === "string"
+    && rawReleaseDate.trim().length > 0
+    && rawReleaseDate.length <= 100
+    && Number.isFinite(Date.parse(rawReleaseDate))
+    ? rawReleaseDate.trim()
+    : null;
+  const rawGenres = song?.genres;
+  const genres = Array.isArray(rawGenres)
+    ? rawGenres.flatMap((rawGenre): SoundchartsSongGenre[] => {
+      const genre = asRecord(rawGenre);
+      const root = typeof genre?.root === "string" ? genre.root.trim() : "";
+      if (root.length === 0 || root.length > 100) return [];
+      const sub = Array.isArray(genre?.sub)
+        ? [...new Set(genre.sub.flatMap((value) => (
+          typeof value === "string" && value.trim().length > 0 && value.trim().length <= 100
+            ? [value.trim()]
+            : []
+        )))]
+        : [];
+      return [{ root, sub }];
+    })
+    : null;
+
+  return { uuid, releaseDate, genres };
+}
+
+export function parseSongUuidResponse(payload: unknown): string {
+  return parseSoundchartsSongResponse(payload).uuid;
 }
 
 export function parseLatestSpotifyAudience(
@@ -210,20 +251,20 @@ export class SoundchartsClient {
     return this.accessTokenPromise;
   }
 
-  async getSongBySpotifyId(spotifyTrackId: string): Promise<string> {
+  async getSongBySpotifyId(spotifyTrackId: string): Promise<SoundchartsSongResolution> {
     const payload = await this.authorizedRequest(
       `/api/v2.25/song/by-platform/spotify/${encodeURIComponent(spotifyTrackId)}`,
       "song/by-platform/spotify/:id",
     );
-    return parseSongUuidResponse(payload);
+    return parseSoundchartsSongResponse(payload);
   }
 
-  async getSongByIsrc(isrc: string): Promise<string> {
+  async getSongByIsrc(isrc: string): Promise<SoundchartsSongResolution> {
     const payload = await this.authorizedRequest(
       `/api/v2.25/song/by-isrc/${encodeURIComponent(isrc)}`,
       "song/by-isrc/:isrc",
     );
-    return parseSongUuidResponse(payload);
+    return parseSoundchartsSongResponse(payload);
   }
 
   async getLatestSpotifyAudience(

@@ -47,10 +47,12 @@ async function resolveSong(
   track: DiagnosticTrack,
 ): Promise<{ uuid: string; source: "Spotify ID" | "ISRC" }> {
   try {
-    return { uuid: await client.getSongBySpotifyId(track.spotifyTrackId), source: "Spotify ID" };
+    const resolution = await client.getSongBySpotifyId(track.spotifyTrackId);
+    return { uuid: resolution.uuid, source: "Spotify ID" };
   } catch (error) {
     if (!(error instanceof SoundchartsApiError) || error.code !== "not_found" || !track.isrc) throw error;
-    return { uuid: await client.getSongByIsrc(track.isrc), source: "ISRC" };
+    const resolution = await client.getSongByIsrc(track.isrc);
+    return { uuid: resolution.uuid, source: "ISRC" };
   }
 }
 

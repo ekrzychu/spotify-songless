@@ -49,6 +49,8 @@ describe("Soundcharts database enrichment", () => {
         identifierCount: 2,
         uniqueValueCount: 2,
         resolutionSource: "spotify",
+        soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
+        soundchartsGenres: [{ root: "Pop", sub: ["Art Pop"] }],
       }),
     };
 
@@ -61,12 +63,15 @@ describe("Soundcharts database enrichment", () => {
       where: { id: { in: ["track-1", "track-2"] }, streamCount: null },
       data: {
         soundchartsUuid: "soundcharts-uuid",
+        soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
+        soundchartsGenresJson: JSON.stringify([{ root: "Pop", sub: ["Art Pop"] }]),
         streamCount: 1_000_000_000n,
         difficulty: "easy",
         streamCountSource: "soundcharts",
         streamCountUpdatedAt: now,
       },
     });
+    expect(database).not.toHaveProperty("trackCategory");
   });
 
   it("stores only the reusable UUID when audience data is unavailable", async () => {
@@ -78,6 +83,8 @@ describe("Soundcharts database enrichment", () => {
         identifierCount: 0,
         uniqueValueCount: 0,
         resolutionSource: "spotify",
+        soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
+        soundchartsGenres: [{ root: "Pop", sub: ["Art Pop"] }],
       }),
     };
 
@@ -86,7 +93,11 @@ describe("Soundcharts database enrichment", () => {
     expect(result).toMatchObject({ status: "audience_unavailable", difficulty: null });
     expect(database.gameTrack.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ["track-1"] }, streamCount: null },
-      data: { soundchartsUuid: "soundcharts-uuid" },
+      data: {
+        soundchartsUuid: "soundcharts-uuid",
+        soundchartsReleaseDate: "1980-09-08T00:00:00+00:00",
+        soundchartsGenresJson: JSON.stringify([{ root: "Pop", sub: ["Art Pop"] }]),
+      },
     });
   });
 
@@ -99,6 +110,8 @@ describe("Soundcharts database enrichment", () => {
         identifierCount: 1,
         uniqueValueCount: 1,
         resolutionSource: "cached",
+        soundchartsReleaseDate: null,
+        soundchartsGenres: null,
       }),
     };
 

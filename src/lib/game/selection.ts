@@ -26,6 +26,7 @@ export async function selectRandomTrack(input: SelectionInput): Promise<TrackSel
   ]);
   const baseWhere: Prisma.GameTrackWhereInput = {
     playable: true,
+    gameEligible: true,
     streamCount: { not: null },
     difficulty: input.difficulty,
     ...(input.category === "all" ? {} : { categories: { some: { categoryId: input.category } } }),
