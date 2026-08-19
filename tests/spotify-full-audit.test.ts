@@ -25,12 +25,13 @@ function auditFor(...rows: Parameters<SpotifyFullAuditAccumulator["consume"]>[0]
 }
 
 describe("Spotify full stream audit", () => {
-  it("parses integral decimal stream counts", () => {
+  it("rounds finite non-negative decimal stream counts for audit comparison", () => {
     expect(parseSpotifyFullStreams("1316855716.0")).toBe(1_316_855_716);
-    expect(parseSpotifyFullStreams(" 42.000 ")).toBe(42);
+    expect(parseSpotifyFullStreams("168237697.07436818")).toBe(168_237_697);
+    expect(parseSpotifyFullStreams("51404619.29870994")).toBe(51_404_619);
   });
 
-  it.each(["", " ", "-1", "NaN", "Infinity", "12.5"])("rejects invalid stream totals: %s", (value) => {
+  it.each(["", " ", "-1", "NaN", "Infinity"])("rejects invalid stream totals: %s", (value) => {
     expect(parseSpotifyFullStreams(value)).toBeNull();
   });
 
@@ -56,7 +57,7 @@ describe("Spotify full stream audit", () => {
     const report = auditFor(
       {
         spotify_id: "local-track",
-        streams_total: "250000000",
+        streams_total: "250000000.29870994",
         streams_source: "arc7_chart_dump",
         streams_total_estimated: "true",
       },
@@ -66,6 +67,23 @@ describe("Spotify full stream audit", () => {
     expect(report.groups.estimatedFalse).toMatchObject({ matchedTracks: 0 });
     expect(report.groups.arc7ChartDump).toMatchObject({ matchedTracks: 1 });
     expect(report.groups.arc2_2023Top).toMatchObject({ matchedTracks: 0 });
+    expect(report.estimatedTrueConfusionMatrix.normal.normal).toBe(1);
+    expect(report.estimatedTrueRatioBands).toContainEqual({ label: "0.75–1.25", matchedTracks: 1 });
+    expect(report.comparisons[0]).toMatchObject({
+      csvStreams: 250_000_000,
+      streamsSource: "arc7_chart_dump",
+      streamsTotalEstimated: "true",
+    });
+  });
+
+  it("reports invalid matched IDs separately from valid matched IDs", () => {
+    const report = auditFor({ spotify_id: "local-track", streams_total: "not a number" });
+
+    expect(report).toMatchObject({
+      matchedIdsBeforeValidation: 1,
+      validMatchedIds: 0,
+      invalidMatchedIds: 1,
+    });
   });
 
   it("keeps the first valid duplicate CSV row deterministically", () => {
@@ -74,6 +92,11 @@ describe("Spotify full stream audit", () => {
       { spotify_id: "local-track", streams_total: "1000000000", streams_source: "arc7_chart_dump" },
     );
 
+    expect(report).toMatchObject({
+      matchedIdsBeforeValidation: 1,
+      validMatchedIds: 1,
+      invalidMatchedIds: 0,
+    });
     expect(report.matchedRows).toBe(1);
     expect(report.duplicateMatchedRows).toBe(1);
     expect(report.comparisons[0]).toMatchObject({

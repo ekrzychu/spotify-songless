@@ -27,6 +27,7 @@ export type StreamComparison = {
   csvDifficulty: RankedDifficulty;
   streamCountSource: string | null;
   streamsSource: string;
+  streamsTotalEstimated: string;
   estimated: boolean;
   ratio: number | null;
   absolutePercentageError: number | null;
@@ -44,6 +45,9 @@ export type AuditGroup = {
 
 export type SpotifyFullAudit = {
   rowsRead: number;
+  matchedIdsBeforeValidation: number;
+  validMatchedIds: number;
+  invalidMatchedIds: number;
   matchedRows: number;
   invalidMatchedRows: number;
   duplicateMatchedRows: number;
@@ -56,19 +60,17 @@ export type SpotifyFullAudit = {
     arc2_2023Top: AuditGroup;
   };
   confusionMatrix: Record<RankedDifficulty, Record<RankedDifficulty, number>>;
+  estimatedTrueConfusionMatrix: Record<RankedDifficulty, Record<RankedDifficulty, number>>;
+  estimatedTrueRatioBands: Array<{ label: string; matchedTracks: number }>;
 };
-
-const DECIMAL_STREAM_COUNT = /^(?:\d+(?:\.\d*)?|\.\d+)$/;
 
 export function parseSpotifyFullStreams(value: string | undefined): number | null {
   const trimmed = value?.trim() ?? "";
-  if (!trimmed || !DECIMAL_STREAM_COUNT.test(trimmed)) return null;
+  if (!trimmed) return null;
   const parsed = Number(trimmed);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
   const rounded = Math.round(parsed);
-  // A stream count is integral. Accept serialization artifacts such as "1316855716.0",
-  // but do not silently convert a materially fractional value into a count.
-  if (!Number.isSafeInteger(rounded) || Math.abs(parsed - rounded) > 0.000_001) return null;
+  if (!Number.isSafeInteger(rounded)) return null;
   return rounded;
 }
 
@@ -114,8 +116,19 @@ function emptyConfusionMatrix(): SpotifyFullAudit["confusionMatrix"] {
   ])) as SpotifyFullAudit["confusionMatrix"];
 }
 
+const ESTIMATED_RATIO_BANDS = [
+  { label: "CSV/local < 0.25", matches: (ratio: number) => ratio < 0.25 },
+  { label: "0.25–0.50", matches: (ratio: number) => ratio >= 0.25 && ratio < 0.5 },
+  { label: "0.50–0.75", matches: (ratio: number) => ratio >= 0.5 && ratio < 0.75 },
+  { label: "0.75–1.25", matches: (ratio: number) => ratio >= 0.75 && ratio <= 1.25 },
+  { label: "1.25–2.00", matches: (ratio: number) => ratio > 1.25 && ratio <= 2 },
+  { label: "> 2.00", matches: (ratio: number) => ratio > 2 },
+] as const;
+
 export class SpotifyFullAuditAccumulator {
   private readonly comparisonsBySpotifyId = new Map<string, StreamComparison>();
+  private readonly matchedSpotifyIds = new Set<string>();
+  private readonly invalidSpotifyIds = new Set<string>();
   private rowsRead = 0;
   private matchedRows = 0;
   private invalidMatchedRows = 0;
@@ -129,10 +142,12 @@ export class SpotifyFullAuditAccumulator {
     if (!spotifyTrackId) return;
     const local = this.localTracksBySpotifyId.get(spotifyTrackId);
     if (!local) return;
+    this.matchedSpotifyIds.add(spotifyTrackId);
 
     const csvStreams = parseSpotifyFullStreams(row.streams_total);
     if (csvStreams === null) {
       this.invalidMatchedRows += 1;
+      this.invalidSpotifyIds.add(spotifyTrackId);
       return;
     }
     if (this.comparisonsBySpotifyId.has(spotifyTrackId)) {
@@ -153,7 +168,8 @@ export class SpotifyFullAuditAccumulator {
       localDifficulty: local.difficulty,
       csvDifficulty,
       streamCountSource: local.streamCountSource,
-      streamsSource: row.streams_source?.trim() || "(blank)",
+      streamsSource: row.streams_source ?? "",
+      streamsTotalEstimated: row.streams_total_estimated ?? "",
       estimated: parseEstimated(row.streams_total_estimated),
       ratio,
       absolutePercentageError,
@@ -164,23 +180,39 @@ export class SpotifyFullAuditAccumulator {
   report(): SpotifyFullAudit {
     const comparisons = [...this.comparisonsBySpotifyId.values()];
     const confusionMatrix = emptyConfusionMatrix();
+    const estimatedTrueConfusionMatrix = emptyConfusionMatrix();
     for (const comparison of comparisons) {
       confusionMatrix[comparison.localDifficulty][comparison.csvDifficulty] += 1;
+      if (comparison.estimated) {
+        estimatedTrueConfusionMatrix[comparison.localDifficulty][comparison.csvDifficulty] += 1;
+      }
     }
+    const estimatedTrue = comparisons.filter((comparison) => comparison.estimated);
     return {
       rowsRead: this.rowsRead,
+      matchedIdsBeforeValidation: this.matchedSpotifyIds.size,
+      validMatchedIds: comparisons.length,
+      invalidMatchedIds: [...this.invalidSpotifyIds]
+        .filter((spotifyTrackId) => !this.comparisonsBySpotifyId.has(spotifyTrackId)).length,
       matchedRows: this.matchedRows,
       invalidMatchedRows: this.invalidMatchedRows,
       duplicateMatchedRows: this.duplicateMatchedRows,
       comparisons,
       groups: {
         all: summarize(comparisons),
-        estimatedTrue: summarize(comparisons.filter((comparison) => comparison.estimated)),
+        estimatedTrue: summarize(estimatedTrue),
         estimatedFalse: summarize(comparisons.filter((comparison) => !comparison.estimated)),
         arc7ChartDump: summarize(comparisons.filter((comparison) => comparison.streamsSource === "arc7_chart_dump")),
         arc2_2023Top: summarize(comparisons.filter((comparison) => comparison.streamsSource === "arc2_2023_top")),
       },
       confusionMatrix,
+      estimatedTrueConfusionMatrix,
+      estimatedTrueRatioBands: ESTIMATED_RATIO_BANDS.map(({ label, matches }) => ({
+        label,
+        matchedTracks: estimatedTrue.filter((comparison) => (
+          comparison.ratio !== null && matches(comparison.ratio)
+        )).length,
+      })),
     };
   }
 }
@@ -201,18 +233,30 @@ function formatGroup(name: string, group: AuditGroup): string[] {
   ];
 }
 
-function formatConfusionMatrix(matrix: SpotifyFullAudit["confusionMatrix"]): string[] {
+function formatConfusionMatrix(title: string, matrix: SpotifyFullAudit["confusionMatrix"]): string[] {
   const labels = RANKED_DIFFICULTIES.map((difficulty) => difficulty[0]!.toUpperCase() + difficulty.slice(1));
   const width = 12;
   const pad = (value: string) => value.padEnd(width);
   return [
-    "Difficulty confusion matrix (rows: local, columns: CSV)",
+    `${title} (rows: local, columns: CSV)`,
     `${pad("Local / CSV")}${labels.map(pad).join("")}`,
     ...RANKED_DIFFICULTIES.map((localDifficulty) => (
       `${pad(localDifficulty[0]!.toUpperCase() + localDifficulty.slice(1))}${RANKED_DIFFICULTIES
         .map((csvDifficulty) => pad(String(matrix[localDifficulty][csvDifficulty])))
         .join("")}`
     )),
+  ];
+}
+
+function formatPerDifficultyAgreement(title: string, comparisons: readonly StreamComparison[]): string[] {
+  return [
+    title,
+    ...RANKED_DIFFICULTIES.map((difficulty) => {
+      const row = comparisons.filter((comparison) => comparison.localDifficulty === difficulty);
+      const matches = row.filter((comparison) => comparison.difficultyMatches).length;
+      const label = difficulty[0]!.toUpperCase() + difficulty.slice(1);
+      return `${label}: ${matches}/${row.length} (${formatNumber(row.length ? (matches / row.length) * 100 : null)}%)`;
+    }),
   ];
 }
 
@@ -223,8 +267,8 @@ function formatComparison(comparison: StreamComparison): string {
     `local=${comparison.localStreams.toLocaleString()}`,
     `csv=${comparison.csvStreams.toLocaleString()}`,
     `difficulty=${comparison.localDifficulty}/${comparison.csvDifficulty}`,
-    `source=${comparison.streamsSource}`,
-    `estimated=${comparison.estimated}`,
+    `source=${comparison.streamsSource || "(blank)"}`,
+    `estimated=${comparison.streamsTotalEstimated || "(blank)"}`,
     `ratio=${formatNumber(comparison.ratio, 4)}`,
     `error=${formatNumber(comparison.absolutePercentageError)}%`,
   ].join(" | ");
@@ -242,11 +286,26 @@ export function formatSpotifyFullAudit(audit: SpotifyFullAudit): string {
     .filter((comparison) => comparison.estimated && comparison.difficultyMatches)
     .sort((left, right) => left.spotifyTrackId.localeCompare(right.spotifyTrackId))
     .slice(0, 20);
+  const estimatedComparisons = audit.comparisons.filter((comparison) => comparison.estimated);
+  const bestEstimatedMatches = [...estimatedComparisons]
+    .sort((left, right) => (
+      (left.absolutePercentageError ?? Number.POSITIVE_INFINITY) - (right.absolutePercentageError ?? Number.POSITIVE_INFINITY)
+      || left.spotifyTrackId.localeCompare(right.spotifyTrackId)
+    ))
+    .slice(0, 20);
+  const worstEstimatedMatches = [...estimatedComparisons]
+    .sort((left, right) => (
+      (right.absolutePercentageError ?? -1) - (left.absolutePercentageError ?? -1)
+      || left.spotifyTrackId.localeCompare(right.spotifyTrackId)
+    ))
+    .slice(0, 20);
 
   return [
     "Spotify full stream-count audit (read-only)",
     `CSV rows read: ${audit.rowsRead}`,
-    `Matched tracks: ${audit.matchedRows}`,
+    `CSV matched IDs before stream validation: ${audit.matchedIdsBeforeValidation}`,
+    `Valid matched IDs: ${audit.validMatchedIds}`,
+    `Invalid matched IDs: ${audit.invalidMatchedIds}`,
     `Invalid matched CSV rows: ${audit.invalidMatchedRows}`,
     `Duplicate matched CSV rows ignored: ${audit.duplicateMatchedRows}`,
     "",
@@ -260,20 +319,27 @@ export function formatSpotifyFullAudit(audit: SpotifyFullAudit): string {
     "",
     ...formatGroup("E. streams_source=arc2_2023_top", audit.groups.arc2_2023Top),
     "",
-    ...formatConfusionMatrix(audit.confusionMatrix),
+    ...formatConfusionMatrix("Difficulty confusion matrix", audit.confusionMatrix),
     "",
-    "Per-local-difficulty agreement",
-    ...RANKED_DIFFICULTIES.map((difficulty) => {
-      const row = audit.comparisons.filter((comparison) => comparison.localDifficulty === difficulty);
-      const matches = row.filter((comparison) => comparison.difficultyMatches).length;
-      const label = difficulty[0]!.toUpperCase() + difficulty.slice(1);
-      return `${label}: ${matches}/${row.length} (${formatNumber(row.length ? (matches / row.length) * 100 : null)}%)`;
-    }),
+    ...formatPerDifficultyAgreement("Per-local-difficulty agreement", audit.comparisons),
+    "",
+    "estimated=True ratio bands",
+    ...audit.estimatedTrueRatioBands.map((band) => `  ${band.label}: ${band.matchedTracks}`),
+    "",
+    ...formatPerDifficultyAgreement("estimated=True per-local-difficulty agreement", estimatedComparisons),
+    "",
+    ...formatConfusionMatrix("estimated=True difficulty confusion matrix", audit.estimatedTrueConfusionMatrix),
     "",
     "20 worst disagreements by absolute percentage error",
     ...(worstDisagreements.length ? worstDisagreements.map(formatComparison) : ["  None"]),
     "",
     "20 estimated=True examples with matching difficulty",
     ...(estimatedMatches.length ? estimatedMatches.map(formatComparison) : ["  None"]),
+    "",
+    "20 estimated=True best matches by absolute percentage error",
+    ...(bestEstimatedMatches.length ? bestEstimatedMatches.map(formatComparison) : ["  None"]),
+    "",
+    "20 estimated=True worst matches by absolute percentage error",
+    ...(worstEstimatedMatches.length ? worstEstimatedMatches.map(formatComparison) : ["  None"]),
   ].join("\n");
 }
