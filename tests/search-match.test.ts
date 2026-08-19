@@ -5,7 +5,7 @@ import {
   rankAndDedupeVisibleTracks,
   visibleTrackMatchRank,
   type VisibleTrackFields,
-} from "@/lib/spotify/search-match";
+} from "@/lib/game/search-match";
 
 const hello: VisibleTrackFields = { title: "Hello", artistNames: ["Adele"] };
 

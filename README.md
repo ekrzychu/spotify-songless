@@ -189,7 +189,7 @@ npm run db:push
 The default local database is:
 
 ```text
-dev.db
+prisma/dev.db
 ```
 
 The database is not committed to Git. A newly cloned repository therefore starts with an empty catalog.

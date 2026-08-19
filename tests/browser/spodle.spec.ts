@@ -480,7 +480,7 @@ test("the sixth empty attempt says Give up but a selected song still says Submit
     attempts: Array.from({ length: 6 }, (_, index) => ({ number: index + 1, outcome: "skipped" as const, label: "Skipped" })),
   };
   const state = await mockConnectedGame(page, gaveUp, { initialRound: finalAttempt });
-  await page.route("**/api/spotify/search?*", (route) => route.fulfill({ json: { items: [{
+  await page.route("**/api/game/search?*", (route) => route.fulfill({ json: { items: [{
     spotifyTrackId: "1111111111111111111111", isrc: null, title: "Candidate", artistNames: "Test Artist", albumName: "Album",
   }] } }));
   await page.goto("/");
@@ -500,7 +500,7 @@ test("the sixth empty attempt says Give up but a selected song still says Submit
 
 test("a correct guess triggers one 15-second answer playback from zero", async ({ page }) => {
   const state = await mockConnectedGame(page, finishedRound);
-  await page.route("**/api/spotify/search?*", (route) => route.fulfill({ json: { items: [{
+  await page.route("**/api/game/search?*", (route) => route.fulfill({ json: { items: [{
     spotifyTrackId: "0123456789012345678901", isrc: null, title: "Test Song", artistNames: "Test Artist", albumName: "Test Album",
   }] } }));
   await page.goto("/");
@@ -537,7 +537,7 @@ test("a final incorrect submission triggers one answer playback", async ({ page 
     })),
   };
   const state = await mockConnectedGame(page, lostRound, { initialRound: finalAttempt });
-  await page.route("**/api/spotify/search?*", (route) => route.fulfill({ json: { items: [{
+  await page.route("**/api/game/search?*", (route) => route.fulfill({ json: { items: [{
     spotifyTrackId: "1111111111111111111111", isrc: null, title: "Wrong Song", artistNames: "Wrong Artist", albumName: "Album",
   }] } }));
   await page.goto("/");

@@ -3,15 +3,11 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
-  getSpotifySession: vi.fn(),
-  spotifyFetch: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ db: { gameTrack: { findMany: mocks.findMany } } }));
-vi.mock("@/lib/spotify/auth", () => ({ getSpotifySession: mocks.getSpotifySession }));
-vi.mock("@/lib/spotify/api", () => ({ spotifyFetch: mocks.spotifyFetch }));
 
-import { GET } from "@/app/api/spotify/search/route";
+import { GET } from "@/app/api/game/search/route";
 
 function track(
   spotifyTrackId: string,
@@ -31,7 +27,7 @@ function track(
 }
 
 function request(query: string, offset?: string): NextRequest {
-  const url = new URL("http://127.0.0.1:3000/api/spotify/search");
+  const url = new URL("http://127.0.0.1:3000/api/game/search");
   url.searchParams.set("q", query);
   if (offset !== undefined) url.searchParams.set("offset", offset);
   return new NextRequest(url);
@@ -41,7 +37,6 @@ describe("local catalog guess search API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.findMany.mockResolvedValue([]);
-    mocks.getSpotifySession.mockResolvedValue(null);
   });
 
   it("returns an empty response without querying for a short query", async () => {
@@ -50,7 +45,7 @@ describe("local catalog guess search API", () => {
     expect(mocks.findMany).not.toHaveBeenCalled();
   });
 
-  it("searches playable local catalog tracks without gameplay eligibility filters or Spotify", async () => {
+  it("searches playable local catalog tracks without gameplay eligibility filters", async () => {
     mocks.findMany.mockResolvedValue([track("nirvana", "Come As You Are", "Nirvana", "Nevermind", "USGF19942501")]);
 
     const response = await GET(request("came as"));
@@ -73,8 +68,6 @@ describe("local catalog guess search API", () => {
     expect(query.where).not.toHaveProperty("languageEligible");
     expect(query.where).not.toHaveProperty("categories");
     expect(query.take).toBe(101);
-    expect(mocks.getSpotifySession).not.toHaveBeenCalled();
-    expect(mocks.spotifyFetch).not.toHaveBeenCalled();
   });
 
   it("matches artists and returns the existing response fields", async () => {
@@ -105,13 +98,11 @@ describe("local catalog guess search API", () => {
     expect(payload.items.map(({ spotifyTrackId }) => spotifyTrackId)).toEqual(["exact", "prefix", "artist"]);
   });
 
-  it("returns a local 500 without attempting a Spotify fallback", async () => {
+  it("returns a local 500 when the catalog query fails", async () => {
     mocks.findMany.mockRejectedValue(new Error("database unavailable"));
 
     const response = await GET(request("hello"));
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toEqual({ error: "Song search is temporarily unavailable" });
-    expect(mocks.getSpotifySession).not.toHaveBeenCalled();
-    expect(mocks.spotifyFetch).not.toHaveBeenCalled();
   });
 });

@@ -34,7 +34,7 @@ export function GuessSearch({ disabled, busy, finalAttempt, onAttempt }: {
     }
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void fetch(`/api/spotify/search?q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
+      void fetch(`/api/game/search?q=${encodeURIComponent(query.trim())}`, { signal: controller.signal })
         .then((response) => response.ok ? response.json() as Promise<{ items: SearchTrack[] }> : Promise.reject())
         .then(({ items }) => {
           searchCache.set(normalized, items);

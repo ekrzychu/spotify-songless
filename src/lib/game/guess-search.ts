@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { normalizeSearchText, rankAndDedupeVisibleTracks } from "@/lib/spotify/search-match";
+import { normalizeSearchText, rankAndDedupeVisibleTracks } from "@/lib/game/search-match";
 import type { SearchTrack } from "@/types/game";
 
 export const LOCAL_GUESS_SEARCH_RESULT_LIMIT = 8;
