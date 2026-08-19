@@ -5,18 +5,19 @@ import type { AnswerView } from "@/types/game";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { GAME_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 
-export function ResultPanel({ won, attempts, answer, artworkUrl, playbackWarning, onNext, onTryHigher }: {
+export function ResultPanel({ won, attempts, answer, artworkUrl, playbackWarning, onClose, onNext, onTryHigher }: {
   won: boolean;
   attempts: number;
   answer: AnswerView;
   artworkUrl?: string | null;
   playbackWarning?: string | null;
+  onClose: () => void;
   onNext: () => void;
   onTryHigher?: () => void;
 }) {
   const panelRef = useRef<HTMLElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
-  const handleKeyDown = useDialogFocus(panelRef, nextRef);
+  const handleKeyDown = useDialogFocus(panelRef, nextRef, onClose);
   return (
     <div className="result-backdrop" role="presentation">
       <section
@@ -28,6 +29,7 @@ export function ResultPanel({ won, attempts, answer, artworkUrl, playbackWarning
         aria-describedby="result-summary"
         onKeyDown={handleKeyDown}
       >
+        <button className="result-close" type="button" aria-label="Close result" onClick={onClose}>×</button>
         {artworkUrl ? (
           <div className="result-artwork">
             {/* SDK metadata is the source; no per-result Spotify Web API lookup is made. */}

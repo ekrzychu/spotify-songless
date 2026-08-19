@@ -40,7 +40,9 @@ export function GameShell() {
   const [exhaustedPool, setExhaustedPool] = useState<Filters | null>(null);
   const [setProgress, setSetProgress] = useState<SetProgressView>({ completed: 0, total: 0 });
   const [stats, setStats] = useState<LocalStats>(EMPTY_STATS);
+  const [dismissedResultRoundId, setDismissedResultRoundId] = useState<string | null>(null);
   const revealStartedRoundRef = useRef<string | null>(null);
+  const finishedNextRef = useRef<HTMLButtonElement>(null);
   const connected = connection === "connected";
   const player = useSpotifyPlayer(connected);
   const resetPlayback = player.resetPlayback;
@@ -58,11 +60,13 @@ export function GameShell() {
       const payload = await response.json() as RoundView & { error?: string; code?: string };
       if (response.status === 409 && payload.code === "pool_exhausted") {
         setRound(null);
+        setDismissedResultRoundId(null);
         setExhaustedPool(nextFilters);
         localStorage.removeItem(STORAGE_KEYS.round);
         return;
       }
       if (!response.ok) throw new Error(payload.error ?? "A song could not be loaded");
+      setDismissedResultRoundId(null);
       setRound(payload);
       if (payload.setProgress) setSetProgress(payload.setProgress);
       localStorage.setItem(STORAGE_KEYS.round, JSON.stringify({ id: payload.id, ...nextFilters }));
@@ -262,7 +266,18 @@ export function GameShell() {
     else applyFilters(next);
   };
 
-  const modalOpen = Boolean((round?.finished && round.answer) || pendingFilters || confirmingReset);
+  const showResult = Boolean(
+    round?.finished
+    && round.answer
+    && dismissedResultRoundId !== round.id,
+  );
+  const modalOpen = Boolean(showResult || pendingFilters || confirmingReset);
+  const dismissResult = () => {
+    if (!round?.finished) return;
+    setDismissedResultRoundId(round.id);
+    requestAnimationFrame(() => requestAnimationFrame(() => finishedNextRef.current?.focus()));
+  };
+  const startNextSong = () => void newRound(filters);
   const currentCategory = getCategory(filters.category)?.label ?? filters.category;
   const currentDifficulty = GAME_DIFFICULTY_LABELS[filters.difficulty];
   const currentSnippetLength = round?.snippetLength ?? 0.1;
@@ -327,7 +342,11 @@ export function GameShell() {
               <strong className="snippet-duration">{currentSnippetLength}s</strong>
             </div>
             <DurationBar attempt={round?.attempt ?? 0} progressMs={player.progressMs} />
-            <GuessSearch disabled={!round || round.finished || loadingRound} busy={attemptBusy} finalAttempt={round?.attempt === MAX_ATTEMPTS - 1} onAttempt={(guess) => void attempt(guess)} />
+            {round?.finished && !showResult ? (
+              <button ref={finishedNextRef} className="main-next-button" type="button" disabled={loadingRound} onClick={startNextSong}>Next Song</button>
+            ) : (
+              <GuessSearch disabled={!round || round.finished || loadingRound} busy={attemptBusy} finalAttempt={round?.attempt === MAX_ATTEMPTS - 1} onAttempt={(guess) => void attempt(guess)} />
+            )}
             <AttemptList attempts={round?.attempts ?? []} currentAttempt={round?.attempt ?? 0} finished={round?.finished ?? false} />
             </section>
             <section className="stage-panel" aria-labelledby="stages-heading">
@@ -358,13 +377,14 @@ export function GameShell() {
       <footer><span>Six chances. No daily limit.</span><span>Space to play</span></footer>
 
     </main>
-    {round?.finished && round.answer && <ResultPanel
+    {showResult && round?.finished && round.answer && <ResultPanel
       won={round.won}
       attempts={round.attempts.length}
       answer={round.answer}
       artworkUrl={artworkUrlForUri(player.currentTrackArtwork, round.spotifyUri)}
       playbackWarning={revealWarning}
-      onNext={() => void newRound(filters)}
+      onClose={dismissResult}
+      onNext={startNextSong}
       onTryHigher={nextHigherDifficulty(filters.difficulty) ? () => void tryHigherDifficulty() : undefined}
     />}
     {pendingFilters && <ConfirmDialog onCancel={() => setPendingFilters(null)} onConfirm={() => applyFilters(pendingFilters)} />}

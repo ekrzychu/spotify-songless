@@ -569,7 +569,7 @@ test("pool exhaustion has a dedicated state and leaves filters usable", async ({
   await expect(page.getByRole("button", { name: "Hard", exact: true })).toHaveAttribute("aria-pressed", "true");
 });
 
-test("result dialog owns focus and Next Song starts another round", async ({ page }) => {
+test("result dialog owns focus and its Next Song starts another round", async ({ page }) => {
   const state = await mockConnectedGame(page, finishedRound);
   await page.goto("/");
   await page.getByRole("button", { name: "Skip" }).click();
@@ -582,14 +582,67 @@ test("result dialog owns focus and Next Song starts another round", async ({ pag
   await expect.poll(() => state.playbackBodies().length).toBe(1);
   await expect(page.getByRole("button", { name: "Next Song" })).toBeFocused();
   await expect(page.locator("main")).toHaveAttribute("inert", "");
-  await page.keyboard.press("Escape");
-  await expect(result).toBeVisible();
   await page.getByRole("button", { name: "Next Song" }).click();
   await expect(result).toBeHidden();
   await expect.poll(() => page.evaluate(() => (
     window as unknown as { __spodleSdkTest: { player: { state: { paused: boolean } } } }
   ).__spodleSdkTest.player.state.paused)).toBe(true);
   expect(state.roundRequests()).toBeGreaterThanOrEqual(2);
+});
+
+test("closing a result preserves the finished round and exposes the main Next Song", async ({ page }) => {
+  const state = await mockConnectedGame(page, finishedRound);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Skip" }).click();
+  const result = page.getByRole("dialog", { name: "Test Song" });
+  await expect(result).toBeVisible();
+  const pauseCallsBeforeDismiss = await page.evaluate(() => (
+    window as unknown as { __spodleSdkTest: { player: { pauseCalls: number } } }
+  ).__spodleSdkTest.player.pauseCalls);
+  const requestsBeforeDismiss = state.roundRequests();
+
+  const close = result.getByRole("button", { name: "Close result" });
+  await expect(close).toHaveCSS("width", "38px");
+  await expect(close).toHaveCSS("height", "38px");
+  await close.click();
+
+  await expect(result).toBeHidden();
+  await expect(page.locator("main")).not.toHaveAttribute("inert", "");
+  await expect(page.locator(".attempt-list")).toContainText("Test Song");
+  await expect(page.locator(".set-progress")).toContainText("1 / 81");
+  const mainNext = page.locator("main").getByRole("button", { name: "Next Song" });
+  await expect(mainNext).toBeVisible();
+  await expect(mainNext).toBeFocused();
+  expect(state.roundRequests()).toBe(requestsBeforeDismiss);
+  expect(await page.evaluate(() => (
+    window as unknown as { __spodleSdkTest: { player: { pauseCalls: number } } }
+  ).__spodleSdkTest.player.pauseCalls)).toBe(pauseCallsBeforeDismiss);
+
+  await mainNext.click();
+  await expect(page.getByText("Attempt 1")).toBeVisible();
+  await expect.poll(() => state.roundRequests()).toBeGreaterThan(requestsBeforeDismiss);
+  await expect.poll(() => page.evaluate(() => (
+    window as unknown as { __spodleSdkTest: { player: { state: { paused: boolean } } } }
+  ).__spodleSdkTest.player.state.paused)).toBe(true);
+});
+
+test("dismissing one result does not suppress the next round's result", async ({ page }) => {
+  await mockConnectedGame(page, finishedRound);
+  const secondFinishedRound: RoundView = {
+    ...finishedRound,
+    id: "round-2",
+    answer: { ...finishedRound.answer!, title: "Second Song" },
+  };
+  await page.route("**/api/game/round/*/attempt", (route) => route.fulfill({
+    json: route.request().url().includes("round-2") ? secondFinishedRound : finishedRound,
+  }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Skip" }).click();
+  await page.getByRole("dialog", { name: "Test Song" }).getByRole("button", { name: "Close result" }).click();
+  await page.locator("main").getByRole("button", { name: "Next Song" }).click();
+  await expect(page.getByText("Attempt 1")).toBeVisible();
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByRole("dialog", { name: "Second Song" })).toBeVisible();
 });
 
 test("a win offers the next difficulty, keeps category, and safely starts a new round", async ({ page }) => {
