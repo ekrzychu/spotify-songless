@@ -3,7 +3,21 @@
 import { useRef } from "react";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 
-export function ConfirmDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+export function ConfirmDialog({
+  onCancel,
+  onConfirm,
+  title = "Start a new song?",
+  description = "Your progress on this song will be left behind.",
+  cancelLabel = "Keep playing",
+  confirmLabel = "Start new song",
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+  title?: string;
+  description?: string;
+  cancelLabel?: string;
+  confirmLabel?: string;
+}) {
   const panelRef = useRef<HTMLElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const handleKeyDown = useDialogFocus(panelRef, cancelRef, onCancel);
@@ -18,11 +32,11 @@ export function ConfirmDialog({ onCancel, onConfirm }: { onCancel: () => void; o
         aria-describedby="confirm-description"
         onKeyDown={handleKeyDown}
       >
-        <h2 id="confirm-title">Start a new song?</h2>
-        <p id="confirm-description">Your progress on this song will be left behind.</p>
+        <h2 id="confirm-title">{title}</h2>
+        <p id="confirm-description">{description}</p>
         <div>
-          <button ref={cancelRef} type="button" onClick={onCancel}>Keep playing</button>
-          <button type="button" onClick={onConfirm}>Start new song</button>
+          <button ref={cancelRef} type="button" onClick={onCancel}>{cancelLabel}</button>
+          <button type="button" onClick={onConfirm}>{confirmLabel}</button>
         </div>
       </section>
     </div>

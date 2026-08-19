@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  findRounds: vi.fn(), findUnavailable: vi.fn(), count: vi.fn(), findTrack: vi.fn(),
+  findRounds: vi.fn(), findUnavailable: vi.fn(), count: vi.fn(), findTrack: vi.fn(), deleteRounds: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   db: {
-    gameRound: { findMany: mocks.findRounds },
+    gameRound: { findMany: mocks.findRounds, deleteMany: mocks.deleteRounds },
     sessionUnavailableTrack: { findMany: mocks.findUnavailable },
     gameTrack: { count: mocks.count, findFirst: mocks.findTrack },
   },
 }));
 
-import { gameplaySelectionWhere, selectRandomTrack } from "@/lib/game/selection";
+import { gameplaySelectionWhere, getSetProgress, resetSetProgress, selectRandomTrack } from "@/lib/game/selection";
 
 type SelectionFixture = {
   playable: boolean;
@@ -36,13 +36,14 @@ describe("random track selection", () => {
     mocks.findUnavailable.mockResolvedValue([]);
     mocks.count.mockResolvedValue(1);
     mocks.findTrack.mockResolvedValue({ id: "eligible" });
+    mocks.deleteRounds.mockResolvedValue({ count: 4 });
     vi.spyOn(Math, "random").mockReturnValue(0);
   });
 
   it("combines category and difficulty and excludes played/unranked tracks", async () => {
     await selectRandomTrack({ sessionId: "session", category: "rock", difficulty: "hard" });
     expect(mocks.findRounds).toHaveBeenCalledWith({
-      where: { sessionId: "session", categoryId: "rock", difficulty: "hard" },
+      where: { sessionId: "session", categoryId: "rock", difficulty: "hard", finished: true },
       select: { trackId: true },
     });
     expect(mocks.count).toHaveBeenLastCalledWith({ where: {
@@ -71,7 +72,7 @@ describe("random track selection", () => {
   it("selects Unranked from either missing ranking field without consulting Soundcharts state", async () => {
     await selectRandomTrack({ sessionId: "session", category: "all", difficulty: "unranked" });
     expect(mocks.findRounds).toHaveBeenCalledWith({
-      where: { sessionId: "session", categoryId: "all", difficulty: "unranked" },
+      where: { sessionId: "session", categoryId: "all", difficulty: "unranked", finished: true },
       select: { trackId: true },
     });
     const where = mocks.count.mock.calls[0]?.[0].where as Record<string, unknown>;
@@ -216,5 +217,55 @@ describe("random track selection", () => {
     mocks.count.mockResolvedValue(0);
     await expect(selectRandomTrack({ sessionId: "session", category: "all", difficulty: "normal" }))
       .resolves.toEqual({ status: "empty" });
+  });
+
+  it("counts only distinct finished eligible tracks as completed progress", async () => {
+    mocks.findRounds.mockResolvedValue([{ trackId: "done" }, { trackId: "done" }, { trackId: "other" }]);
+    mocks.findUnavailable.mockResolvedValue([{ trackId: "blocked" }]);
+    mocks.count.mockResolvedValueOnce(81).mockResolvedValueOnce(2);
+    await expect(getSetProgress({ sessionId: "session", category: "rock", difficulty: "normal" }))
+      .resolves.toEqual({ completed: 2, total: 81 });
+    expect(mocks.findRounds).toHaveBeenCalledWith({
+      where: { sessionId: "session", categoryId: "rock", difficulty: "normal", finished: true },
+      select: { trackId: true },
+    });
+    expect(mocks.count.mock.calls[0]?.[0].where).toMatchObject({
+      playable: true,
+      gameEligible: true,
+      languageEligible: true,
+      difficulty: "normal",
+      categories: { some: { categoryId: "rock", gameEligible: true } },
+      id: { notIn: ["blocked"] },
+    });
+    expect(mocks.count.mock.calls[1]?.[0].where.id).toEqual({ in: ["done", "other"] });
+  });
+
+  it("does not increment progress for an unfinished round", async () => {
+    mocks.findRounds.mockResolvedValue([]);
+    mocks.count.mockResolvedValueOnce(5);
+    await expect(getSetProgress({ sessionId: "session", category: "all", difficulty: "unranked" }))
+      .resolves.toEqual({ completed: 0, total: 5 });
+    expect(mocks.count).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps category, difficulty, and Unranked progress scopes independent", async () => {
+    mocks.findRounds.mockResolvedValue([]);
+    mocks.count.mockResolvedValue(3);
+    await getSetProgress({ sessionId: "session", category: "pop", difficulty: "easy" });
+    await getSetProgress({ sessionId: "session", category: "jazz", difficulty: "hard" });
+    await getSetProgress({ sessionId: "session", category: "all", difficulty: "unranked" });
+    expect(mocks.findRounds.mock.calls.map(([query]) => query.where)).toEqual([
+      { sessionId: "session", categoryId: "pop", difficulty: "easy", finished: true },
+      { sessionId: "session", categoryId: "jazz", difficulty: "hard", finished: true },
+      { sessionId: "session", categoryId: "all", difficulty: "unranked", finished: true },
+    ]);
+  });
+
+  it("reset deletes only rounds in the current set and leaves unavailable/catalog data untouched", async () => {
+    await expect(resetSetProgress({ sessionId: "session", category: "rock", difficulty: "normal" })).resolves.toBe(4);
+    expect(mocks.deleteRounds).toHaveBeenCalledWith({
+      where: { sessionId: "session", categoryId: "rock", difficulty: "normal" },
+    });
+    expect(mocks.findUnavailable).not.toHaveBeenCalled();
   });
 });

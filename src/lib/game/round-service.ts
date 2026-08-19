@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { isCorrectGuess } from "@/lib/game/correctness";
 import { MAX_ATTEMPTS, applyAttempt, snippetLengthForAttempt } from "@/lib/game/snippets";
-import { selectRandomTrack } from "@/lib/game/selection";
+import { getSetProgress, selectRandomTrack } from "@/lib/game/selection";
 import type { GameDifficulty, RoundView, SearchTrack } from "@/types/game";
 
 type LoadedRound = GameRound & { track: GameTrack; attempts: RoundAttempt[] };
@@ -21,7 +21,7 @@ function reveal(track: GameTrack, difficulty: GameDifficulty) {
   };
 }
 
-export function roundView(round: LoadedRound): RoundView {
+export function roundView(round: LoadedRound, setProgress?: RoundView["setProgress"]): RoundView {
   return {
     id: round.id,
     spotifyUri: round.track.spotifyUri,
@@ -36,8 +36,18 @@ export function roundView(round: LoadedRound): RoundView {
         ? "Skipped"
         : `${attempt.guessTitle ?? "Unknown track"} — ${attempt.guessArtists ?? "Unknown artist"}`,
     })),
+    ...(setProgress ? { setProgress } : {}),
     ...(round.finished ? { answer: reveal(round.track, round.difficulty as GameDifficulty) } : {}),
   };
+}
+
+async function roundViewWithProgress(round: LoadedRound): Promise<RoundView> {
+  const setProgress = await getSetProgress({
+    sessionId: round.sessionId,
+    category: round.categoryId,
+    difficulty: round.difficulty as GameDifficulty,
+  });
+  return roundView(round, setProgress);
 }
 
 export async function createRound(sessionId: string, category: string, difficulty: GameDifficulty): Promise<RoundView> {
@@ -49,7 +59,7 @@ export async function createRound(sessionId: string, category: string, difficult
     data: { sessionId, trackId: track.id, categoryId: category, difficulty },
     include: { track: true, attempts: true },
   });
-  return roundView(round);
+  return roundViewWithProgress(round);
 }
 
 export async function getRound(roundId: string, sessionId: string): Promise<RoundView> {
@@ -57,7 +67,7 @@ export async function getRound(roundId: string, sessionId: string): Promise<Roun
     where: { id: roundId, sessionId }, include: { track: true, attempts: true },
   });
   if (!round) throw new RoundNotFoundError();
-  return roundView(round);
+  return roundViewWithProgress(round);
 }
 
 export async function recordAttempt(
@@ -66,7 +76,7 @@ export async function recordAttempt(
   guess: SearchTrack | null,
 ): Promise<RoundView> {
   try {
-    return await db.$transaction(async (tx) => {
+    const updated = await db.$transaction(async (tx) => {
       const round = await tx.gameRound.findFirst({
         where: { id: roundId, sessionId }, include: { track: true, attempts: true },
       });
@@ -94,8 +104,9 @@ export async function recordAttempt(
         },
         include: { track: true, attempts: true },
       });
-      return roundView(updated);
+      return updated;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return roundViewWithProgress(updated);
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       return getRound(roundId, sessionId);

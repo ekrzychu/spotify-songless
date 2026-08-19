@@ -9,6 +9,7 @@ const activeRound = (id = "round-one"): RoundView => ({
   finished: false,
   won: false,
   attempts: [],
+  setProgress: { completed: 0, total: 81 },
 });
 
 const finishedRound: RoundView = {
@@ -16,6 +17,7 @@ const finishedRound: RoundView = {
   attempt: 0,
   finished: true,
   won: true,
+  setProgress: { completed: 1, total: 81 },
   attempts: [{ number: 1, outcome: "correct", label: "Test Song — Test Artist" }],
   answer: {
     title: "Test Song", artistNames: "Test Artist", albumName: "Test Album",
@@ -41,10 +43,16 @@ async function mockSpotifySdk(page: Page): Promise<void> {
         player: null,
         instances: 0,
         initialVolumes: [],
+        events: [],
         confirm(uri, position = 0) {
           const player = this.player;
           setTimeout(() => {
-            player.state = { paused: false, position, duration: 180000, disallows: {}, track_window: { current_track: { uri } } };
+            player.positionBase = position;
+            player.startedAt = performance.now();
+            player.state = { paused: false, position, duration: 180000, disallows: {}, track_window: { current_track: {
+              id: uri.split(':').at(-1), uri, name: 'Test Song', artists: [{ name: 'Test Artist' }],
+              album: { name: 'Test Album', images: [{ url: 'https://i.scdn.co/image/browsercover123', width: 640, height: 640 }] }
+            } } };
             player.listeners.player_state_changed?.(player.state);
           }, 25);
         },
@@ -58,6 +66,8 @@ async function mockSpotifySdk(page: Page): Promise<void> {
           this.seekCalls = [];
           this.setVolumeCalls = [];
           this.volume = options.volume;
+          this.startedAt = 0;
+          this.positionBase = 0;
           this.state = { paused: true, position: 0, duration: 180000, disallows: {}, track_window: { current_track: { uri: null } } };
           window.__spodleSdkTest.instances += 1;
           window.__spodleSdkTest.initialVolumes.push(options.volume);
@@ -66,10 +76,11 @@ async function mockSpotifySdk(page: Page): Promise<void> {
         addListener(name, callback) { this.listeners[name] = callback; return true; }
         connect() { setTimeout(() => this.listeners.ready?.({ device_id: 'browser-test' }), 0); return Promise.resolve(true); }
         disconnect() {}
-        activateElement() { return Promise.resolve(); }
+        activateElement() { window.__spodleSdkTest.events.push('activate'); return Promise.resolve(); }
         pause() {
           this.pauseCalls += 1;
           setTimeout(() => {
+            if (!this.state.paused) this.state = { ...this.state, position: this.positionBase + performance.now() - this.startedAt };
             this.state = { ...this.state, paused: true };
             this.listeners.player_state_changed?.(this.state);
           }, 20);
@@ -78,6 +89,8 @@ async function mockSpotifySdk(page: Page): Promise<void> {
         resume() {
           this.resumeCalls += 1;
           setTimeout(() => {
+            this.positionBase = this.state.position;
+            this.startedAt = performance.now();
             this.state = { ...this.state, paused: false };
             this.listeners.player_state_changed?.(this.state);
           }, 20);
@@ -93,7 +106,10 @@ async function mockSpotifySdk(page: Page): Promise<void> {
         }
         getVolume() { return Promise.resolve(this.volume); }
         setVolume(volume) { this.setVolumeCalls.push(volume); this.volume = volume; return Promise.resolve(); }
-        getCurrentState() { return Promise.resolve(this.state); }
+        getCurrentState() {
+          if (!this.state.paused) this.state = { ...this.state, position: this.positionBase + performance.now() - this.startedAt };
+          return Promise.resolve(this.state);
+        }
       }};
       setTimeout(() => window.onSpotifyWebPlaybackSDKReady?.(), 0);
     `,
@@ -108,7 +124,7 @@ async function mockConnectedGame(
   roundRequests: () => number;
   roundBodies: () => Array<{ category: string; difficulty: string }>;
   playbackBodies: () => Array<{ positionMs: number; spotifyUri: string }>;
-  pauseBodies: () => Array<{ deviceId: string }>;
+  resetRequests: () => number;
 }> {
   await page.addInitScript(() => localStorage.clear());
   await page.route("**/api/auth/status", (route) => route.fulfill({ json: { connected: true } }));
@@ -116,35 +132,31 @@ async function mockConnectedGame(
   let roundRequests = 0;
   const roundBodies: Array<{ category: string; difficulty: string }> = [];
   const playbackBodies: Array<{ positionMs: number; spotifyUri: string }> = [];
-  const pauseBodies: Array<{ deviceId: string }> = [];
+  let resetRequests = 0;
   await page.route("**/api/game/round", (route) => {
     roundRequests += 1;
     roundBodies.push(route.request().postDataJSON() as { category: string; difficulty: string });
     return route.fulfill({ json: options.initialRound ?? activeRound(roundRequests === 1 ? "round-one" : `round-${roundRequests}`) });
   });
   await page.route("**/api/game/round/*/attempt", (route) => route.fulfill({ json: attemptResponse }));
+  await page.route("**/api/game/progress/reset", (route) => {
+    resetRequests += 1;
+    return route.fulfill({ json: { deletedRounds: 4 } });
+  });
   await page.route("**/api/spotify/playback", async (route) => {
     const body = route.request().postDataJSON() as { positionMs: number; spotifyUri: string };
     playbackBodies.push(body);
+    await page.evaluate(() => (window as unknown as { __spodleSdkTest: { events: string[] } }).__spodleSdkTest.events.push("remote-play"));
     if (options.autoConfirmPlayback !== false) {
       await page.evaluate((uri) => (window as unknown as { __spodleSdkTest: { confirm: (value: string) => void } }).__spodleSdkTest.confirm(uri), body.spotifyUri);
     }
     await route.fulfill({ json: { ok: true } });
   });
-  await page.route("**/api/spotify/playback/pause", async (route) => {
-    pauseBodies.push(route.request().postDataJSON() as { deviceId: string });
-    await page.evaluate(() => {
-      const sdk = (window as unknown as { __spodleSdkTest: { player: { state: { paused: boolean }; listeners: Record<string, (state: unknown) => void> } } }).__spodleSdkTest;
-      sdk.player.state = { ...sdk.player.state, paused: true };
-      sdk.player.listeners.player_state_changed?.(sdk.player.state);
-    });
-    await route.fulfill({ status: 204, body: "" });
-  });
   return {
     roundRequests: () => roundRequests,
     roundBodies: () => roundBodies,
     playbackBodies: () => playbackBodies,
-    pauseBodies: () => pauseBodies,
+    resetRequests: () => resetRequests,
   };
 }
 
@@ -353,6 +365,28 @@ test("rapid double Play sends only one initial remote start request", async ({ p
   expect(state.playbackBodies()).toHaveLength(1);
 });
 
+test("user activation is invoked synchronously before the remote play request", async ({ page }) => {
+  const remotePauseRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/spotify/playback/pause")) remotePauseRequests.push(request.url());
+  });
+  await mockConnectedGame(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Play song snippet" }).click();
+  await expect.poll(() => page.evaluate(() => (
+    window as unknown as { __spodleSdkTest: { events: string[] } }
+  ).__spodleSdkTest.events)).toEqual(["activate", "remote-play"]);
+  await page.waitForTimeout(1_200);
+  expect(remotePauseRequests).toEqual([]);
+});
+
+test("the normal play area shows duration without transport status copy", async ({ page }) => {
+  await mockConnectedGame(page);
+  await page.goto("/");
+  await expect(page.locator(".snippet-duration")).toHaveText("0.1s");
+  await expect(page.getByText(/Play 0\.1s intro|Preparing Spotify|Stopping Spotify/)).toHaveCount(0);
+});
+
 test("Skip advances an attempt", async ({ page }) => {
   await mockConnectedGame(page, {
     ...activeRound(), attempt: 1, snippetLength: 1,
@@ -365,6 +399,41 @@ test("Skip advances an attempt", async ({ page }) => {
   await expect(page.getByText("Skipped", { exact: true })).toBeVisible();
   await expect(page.getByText("Attempt 2")).toBeVisible();
   await expect(page.getByRole("progressbar", { name: "Snippet playback" })).toHaveAttribute("aria-valuenow", "0");
+});
+
+test("Skip during playback continues the same run to the next absolute endpoint", async ({ page }) => {
+  const nextRound = {
+    ...activeRound(), attempt: 1, snippetLength: 1,
+    attempts: [{ number: 1, outcome: "skipped" as const, label: "Skipped" }],
+  };
+  const state = await mockConnectedGame(page, nextRound);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Play song snippet" }).click();
+  await expect(page.getByRole("button", { name: "Pause song snippet" })).toBeVisible();
+  const before = await page.evaluate(() => {
+    const player = (window as unknown as { __spodleSdkTest: { player: { resumeCalls: number; seekCalls: number[] } } }).__spodleSdkTest.player;
+    return { resume: player.resumeCalls, seek: player.seekCalls.length };
+  });
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByText("Attempt 2")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => {
+    const player = (window as unknown as { __spodleSdkTest: { player: { resumeCalls: number; seekCalls: number[] } } }).__spodleSdkTest.player;
+    return { resume: player.resumeCalls, seek: player.seekCalls.length };
+  })).toEqual(before);
+  expect(state.playbackBodies()).toHaveLength(1);
+});
+
+test("a failed Skip request safely stops the optimistically extended transport", async ({ page }) => {
+  await mockConnectedGame(page);
+  await page.route("**/api/game/round/*/attempt", (route) => route.fulfill({ status: 500, json: { error: "Mock attempt failure" } }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Play song snippet" }).click();
+  await expect(page.getByRole("button", { name: "Pause song snippet" })).toBeVisible();
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByText("Mock attempt failure")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (
+    window as unknown as { __spodleSdkTest: { player: { state: { paused: boolean } } } }
+  ).__spodleSdkTest.player.state.paused)).toBe(true);
 });
 
 test("first play primes remotely and replay uses the same local snippet lifecycle", async ({ page }) => {
@@ -490,8 +559,9 @@ test("pool exhaustion has a dedicated state and leaves filters usable", async ({
     return route.fulfill({ json: activeRound("after-filter-change") });
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "You cleared this set." })).toBeVisible();
-  await expect(page.getByText(/every available All Music · Normal track/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "You've played every available song." })).toBeVisible();
+  await expect(page.getByText("Set complete")).toBeVisible();
+  await expect(page.getByText(/All Music · Normal/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Hard", exact: true }).click();
@@ -506,6 +576,7 @@ test("result dialog owns focus and Next Song starts another round", async ({ pag
   const result = page.getByRole("dialog", { name: "Test Song" });
   await expect(result).toBeVisible();
   await expect(result.locator(".result-artwork")).toBeVisible();
+  await expect(result.locator(".result-artwork img")).toHaveAttribute("src", "https://i.scdn.co/image/browsercover123");
   await expect(result.getByText("It was...")).toBeVisible();
   await expect(result.getByText("Solved in 1 / 6")).toBeVisible();
   await expect.poll(() => state.playbackBodies().length).toBe(1);
@@ -521,6 +592,35 @@ test("result dialog owns focus and Next Song starts another round", async ({ pag
   expect(state.roundRequests()).toBeGreaterThanOrEqual(2);
 });
 
+test("a win offers the next difficulty, keeps category, and safely starts a new round", async ({ page }) => {
+  const state = await mockConnectedGame(page, finishedRound);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByRole("button", { name: "Try higher difficulty" })).toBeVisible();
+  await page.getByRole("button", { name: "Try higher difficulty" }).click();
+  await expect.poll(() => state.roundBodies().at(-1)).toEqual({ category: "all", difficulty: "hard" });
+  await expect(page.getByRole("button", { name: "Hard", exact: true })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("losses do not offer higher difficulty", async ({ page }) => {
+  await mockConnectedGame(page, { ...finishedRound, won: false });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByRole("button", { name: "Try higher difficulty" })).toHaveCount(0);
+});
+
+test("set progress is visible and reset confirms before clearing only the current set", async ({ page }) => {
+  const state = await mockConnectedGame(page);
+  await page.goto("/");
+  await expect(page.locator(".set-progress")).toContainText("0 / 81");
+  await page.locator(".set-progress").getByRole("button", { name: "Reset" }).click();
+  const dialog = page.getByRole("dialog", { name: "Reset this set?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Reset progress" }).click();
+  await expect.poll(() => state.resetRequests()).toBe(1);
+  await expect.poll(() => state.roundRequests()).toBeGreaterThanOrEqual(2);
+});
+
 test("restoring a previously finished round does not autoplay its answer", async ({ page }) => {
   const state = await mockConnectedGame(page);
   await page.addInitScript(() => localStorage.setItem("spodle:round", JSON.stringify({
@@ -529,18 +629,33 @@ test("restoring a previously finished round does not autoplay its answer", async
   await page.route("**/api/game/round/round-one", (route) => route.fulfill({ json: finishedRound }));
   await page.goto("/");
   await expect(page.getByRole("dialog", { name: "Test Song" })).toBeVisible();
+  await expect(page.locator(".result-artwork img")).toHaveCount(0);
+  await expect(page.locator(".result-artwork--placeholder")).toBeVisible();
   await page.waitForTimeout(250);
   expect(state.playbackBodies()).toEqual([]);
 });
 
+test("refresh restores the active unfinished round without consuming another song", async ({ page }) => {
+  const state = await mockConnectedGame(page);
+  await page.addInitScript(() => localStorage.setItem("spodle:round", JSON.stringify({
+    id: "round-one", category: "all", difficulty: "normal",
+  })));
+  await page.route("**/api/game/round/round-one", (route) => route.fulfill({ json: activeRound() }));
+  await page.goto("/");
+  await expect(page.getByText("Attempt 1")).toBeVisible();
+  expect(state.roundRequests()).toBe(0);
+});
+
 test("an Unranked result labels missing stream data without displaying zero", async ({ page }) => {
   await mockConnectedGame(page, unrankedFinishedRound);
+  await page.addInitScript(() => localStorage.setItem("spodle:filters", JSON.stringify({ category: "all", difficulty: "unranked" })));
   await page.goto("/");
   await page.getByRole("button", { name: "Skip" }).click();
   const result = page.getByRole("dialog", { name: "Test Song" });
   await expect(result).toContainText("DifficultyUnranked");
   await expect(result).toContainText("StreamsNot ranked yet");
   await expect(result.locator(".result-meta")).not.toContainText("0");
+  await expect(result.getByRole("button", { name: "Try higher difficulty" })).toHaveCount(0);
 });
 
 for (const width of [320, 390, 768, 1024, 1440, 1920]) {

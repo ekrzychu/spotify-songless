@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { difficultyFromStreams } from "@/lib/game/difficulty";
+import { difficultyFromStreams, nextHigherDifficulty } from "@/lib/game/difficulty";
 import { GAME_DIFFICULTIES, RANKED_DIFFICULTIES } from "@/types/game";
 
 describe("difficultyFromStreams", () => {
@@ -23,5 +23,18 @@ describe("difficultyFromStreams", () => {
     expect([75_000_000, 1_000_000_000].map(difficultyFromStreams).every(
       (difficulty) => RANKED_DIFFICULTIES.includes(difficulty),
     )).toBe(true);
+  });
+});
+
+describe("higher difficulty mapping", () => {
+  it.each([
+    ["easy", "normal"],
+    ["normal", "hard"],
+    ["hard", "extreme"],
+    ["extreme", "impossible"],
+    ["impossible", null],
+    ["unranked", null],
+  ] as const)("maps %s to %s", (current, expected) => {
+    expect(nextHigherDifficulty(current)).toBe(expected);
   });
 });

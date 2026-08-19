@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findRound: vi.fn(), markUnavailable: vi.fn(), updateRound: vi.fn(), transaction: vi.fn(),
-  createRound: vi.fn(), updateTrack: vi.fn(), selectRandomTrack: vi.fn(),
+  createRound: vi.fn(), updateTrack: vi.fn(), selectRandomTrack: vi.fn(), getSetProgress: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -14,7 +14,10 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-vi.mock("@/lib/game/selection", () => ({ selectRandomTrack: mocks.selectRandomTrack }));
+vi.mock("@/lib/game/selection", () => ({
+  selectRandomTrack: mocks.selectRandomTrack,
+  getSetProgress: mocks.getSetProgress,
+}));
 
 import { replaceUnavailableRound } from "@/lib/game/round-service";
 
@@ -33,6 +36,7 @@ describe("session-scoped unavailable tracks", () => {
     mocks.updateRound.mockResolvedValue({});
     mocks.transaction.mockResolvedValue([]);
     mocks.selectRandomTrack.mockResolvedValue({ status: "selected", track });
+    mocks.getSetProgress.mockResolvedValue({ completed: 0, total: 1 });
     mocks.createRound.mockResolvedValue({
       id: "replacement", sessionId: "session-a", trackId: track.id, attempt: 0, finished: false, won: false,
       categoryId: "all", difficulty: "normal", createdAt: new Date(), finishedAt: null, track, attempts: [],

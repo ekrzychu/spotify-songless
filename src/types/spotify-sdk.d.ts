@@ -30,7 +30,18 @@ declare global {
       toggling_shuffle?: boolean;
       transferring_playback?: boolean;
     };
-    track_window?: { current_track?: { uri?: string } };
+    track_window?: {
+      current_track?: {
+        id?: string;
+        uri?: string;
+        name?: string;
+        album?: {
+          name?: string;
+          images?: Array<{ url: string; width?: number | null; height?: number | null }>;
+        };
+        artists?: Array<{ name: string }>;
+      };
+    };
   };
   type SpotifyError = { message: string };
   type SpotifyReady = { device_id: string };

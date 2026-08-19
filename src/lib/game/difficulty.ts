@@ -30,3 +30,10 @@ export function difficultyFromStreams(streams: number): RankedDifficulty {
   if (streams >= DIFFICULTY_THRESHOLDS.extreme) return "extreme";
   return "impossible";
 }
+
+export function nextHigherDifficulty(difficulty: GameDifficulty): RankedDifficulty | null {
+  const index = (["easy", "normal", "hard", "extreme"] as const).indexOf(
+    difficulty as "easy" | "normal" | "hard" | "extreme",
+  );
+  return index < 0 ? null : (["normal", "hard", "extreme", "impossible"] as const)[index] ?? null;
+}

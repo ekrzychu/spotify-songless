@@ -5,9 +5,9 @@ import { persistVolumePercent, readStoredVolumePercent } from "@/lib/client/volu
 import {
   SnippetPlaybackController,
   isPlaybackBusyPhase,
-  spotifyPlaybackPausePayload,
   spotifyPlaybackStartPayload,
   type PlaybackPhase,
+  type SnippetPlayerState,
 } from "@/lib/spotify/snippet-playback";
 
 type PlayerStatus = "loading" | "ready" | "offline" | "error";
@@ -19,10 +19,27 @@ export class PlaybackRequestError extends Error {
   }
 }
 
+export type CurrentTrackArtwork = { spotifyUri: string; url: string | null };
+
+export function artworkFromState(state: SnippetPlayerState | null): CurrentTrackArtwork | null {
+  const track = state?.track_window?.current_track;
+  if (!track?.uri) return null;
+  const image = track.album?.images
+    ?.filter((candidate) => /^https:\/\/i\.scdn\.co\/image\/[A-Za-z0-9]+$/.test(candidate.url))
+    .sort((left, right) => (right.width ?? 0) - (left.width ?? 0))[0];
+  return { spotifyUri: track.uri, url: image?.url ?? null };
+}
+
+export function artworkUrlForUri(artwork: CurrentTrackArtwork | null, spotifyUri: string): string | null {
+  return artwork?.spotifyUri === spotifyUri ? artwork.url : null;
+}
+
 export function useSpotifyPlayer(enabled: boolean) {
   const playerRef = useRef<SpotifyPlayer | null>(null);
   const controllerRef = useRef<SnippetPlaybackController | null>(null);
   const deviceIdRef = useRef<string | null>(null);
+  const activationPromiseRef = useRef<Promise<void> | null>(null);
+  const activatedRef = useRef(false);
   const [status, setStatus] = useState<PlayerStatus>(enabled ? "loading" : "offline");
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -30,6 +47,21 @@ export function useSpotifyPlayer(enabled: boolean) {
   const [progressMs, setProgressMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [volumePercent, setVolumePercent] = useState(65);
+  const [currentTrackArtwork, setCurrentTrackArtwork] = useState<CurrentTrackArtwork | null>(null);
+
+  const activateForUserGesture = useCallback(() => {
+    const player = playerRef.current;
+    if (!player || activatedRef.current || activationPromiseRef.current) return;
+    const activation = player.activateElement();
+    activationPromiseRef.current = activation;
+    void activation.then(() => {
+      activatedRef.current = true;
+    }).catch(() => {
+      setError("Press Play again to allow audio in this browser.");
+    }).finally(() => {
+      if (activationPromiseRef.current === activation) activationPromiseRef.current = null;
+    });
+  }, []);
 
   const pause = useCallback(async () => {
     if (controllerRef.current) return controllerRef.current.stop(false);
@@ -54,7 +86,8 @@ export function useSpotifyPlayer(enabled: boolean) {
     const normalized = persistVolumePercent(nextVolume);
     setVolumePercent(normalized);
     try {
-      await playerRef.current?.setVolume(normalized / 100);
+      if (controllerRef.current) await controllerRef.current.setUserVolume(normalized / 100);
+      else await playerRef.current?.setVolume(normalized / 100);
     } catch (volumeError) {
       if (process.env.NODE_ENV === "development") console.error("Spotify volume update failed", volumeError);
       setError("Spotify volume could not be changed.");
@@ -87,22 +120,13 @@ export function useSpotifyPlayer(enabled: boolean) {
         onPlaying: setPlaying,
         onProgress: setProgressMs,
         onPhase: setPhase,
-        onStopError: setError,
-      }, undefined, {
-        pauseRemotely: async () => {
-          const currentDeviceId = deviceIdRef.current;
-          if (!currentDeviceId) throw new Error("Spotify playback device is unavailable.");
-          const response = await fetch("/api/spotify/playback/pause", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(spotifyPlaybackPausePayload(currentDeviceId)),
-          });
-          if (!response.ok) {
-            const payload = (await response.json().catch(() => null)) as { error?: string; code?: string } | null;
-            throw new PlaybackRequestError(payload?.code ?? "playback_failed", payload?.error ?? "Playback could not be paused");
-          }
+        onState: (state) => {
+          const artwork = artworkFromState(state);
+          if (artwork) setCurrentTrackArtwork(artwork);
         },
+        onStopError: setError,
       });
+      void controller.setUserVolume(initialVolume / 100).catch(() => undefined);
       controllerRef.current = controller;
       player.addListener("ready", ({ device_id }) => {
         deviceIdRef.current = device_id;
@@ -112,6 +136,8 @@ export function useSpotifyPlayer(enabled: boolean) {
         controller.invalidateArm();
         void controller.stop(false);
         deviceIdRef.current = null;
+        activatedRef.current = false;
+        activationPromiseRef.current = null;
         setStatus("offline"); setDeviceId(null);
       });
       player.addListener("player_state_changed", (state) => controller.handleState(state));
@@ -158,6 +184,8 @@ export function useSpotifyPlayer(enabled: boolean) {
       controllerRef.current = null;
       playerRef.current = null;
       deviceIdRef.current = null;
+      activatedRef.current = false;
+      activationPromiseRef.current = null;
       if (controller && player) void controller.stop(false).finally(() => player.disconnect());
       else player?.disconnect();
     };
@@ -168,6 +196,12 @@ export function useSpotifyPlayer(enabled: boolean) {
     if (!player || !deviceId || status !== "ready") throw new Error("Spotify player is not ready");
     const durationMs = durationSeconds * 1000;
     setError(null);
+    setCurrentTrackArtwork((current) => current?.spotifyUri === spotifyUri ? current : null);
+    if (!activatedRef.current) {
+      const activation = activationPromiseRef.current;
+      if (!activation) throw new Error("Press Play again to activate Spotify audio.");
+      await activation;
+    }
     const controller = controllerRef.current;
     if (!controller) throw new Error("Spotify player is not ready");
     await controller.play({ spotifyUri, logicalDurationMs: durationMs, primeTrack: async (signal) => {
@@ -183,6 +217,10 @@ export function useSpotifyPlayer(enabled: boolean) {
     } });
   }, [deviceId, status]);
 
+  const extendSnippet = useCallback((durationSeconds: number) => (
+    controllerRef.current?.extendActiveSnippet(durationSeconds * 1000) ?? false
+  ), []);
+
   return {
     status,
     playing,
@@ -191,7 +229,11 @@ export function useSpotifyPlayer(enabled: boolean) {
     progressMs,
     volumePercent,
     error,
+    currentTrackArtwork,
     playSnippet,
+    extendSnippet,
+    audiblyPlaying: playing && phase === "snippet-playing",
+    activateForUserGesture,
     pause,
     resetPlayback,
     invalidateArm,

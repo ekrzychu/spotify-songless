@@ -5,8 +5,14 @@ import type { AnswerView } from "@/types/game";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import { GAME_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 
-export function ResultPanel({ won, attempts, answer, playbackWarning, onNext }: {
-  won: boolean; attempts: number; answer: AnswerView; playbackWarning?: string | null; onNext: () => void;
+export function ResultPanel({ won, attempts, answer, artworkUrl, playbackWarning, onNext, onTryHigher }: {
+  won: boolean;
+  attempts: number;
+  answer: AnswerView;
+  artworkUrl?: string | null;
+  playbackWarning?: string | null;
+  onNext: () => void;
+  onTryHigher?: () => void;
 }) {
   const panelRef = useRef<HTMLElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
@@ -22,10 +28,18 @@ export function ResultPanel({ won, attempts, answer, playbackWarning, onNext }: 
         aria-describedby="result-summary"
         onKeyDown={handleKeyDown}
       >
-        <div className="result-artwork" aria-hidden="true">
-          <span className="result-record" />
-          <span className="result-sleeve-mark">S</span>
-        </div>
+        {artworkUrl ? (
+          <div className="result-artwork">
+            {/* SDK metadata is the source; no per-result Spotify Web API lookup is made. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={artworkUrl} alt={`${answer.albumName} cover`} />
+          </div>
+        ) : (
+          <div className="result-artwork result-artwork--placeholder" aria-hidden="true">
+            <span className="result-record" />
+            <span className="result-sleeve-mark">S</span>
+          </div>
+        )}
         <p className="result-eyebrow" id="result-summary">It was...</p>
         <h2 id="result-title">{answer.title}</h2>
         <p className="result-artist">{answer.artistNames}</p>
@@ -41,6 +55,9 @@ export function ResultPanel({ won, attempts, answer, playbackWarning, onNext }: 
         <a className="spotify-link" href={answer.spotifyUrl} target="_blank" rel="noreferrer">Open in Spotify <span aria-hidden="true">↗</span></a>
         {playbackWarning && <p className="result-playback-warning" role="status">{playbackWarning}</p>}
         <button ref={nextRef} className="next-button" type="button" onClick={onNext}>Next Song</button>
+        {won && onTryHigher && (
+          <button className="higher-button" type="button" onClick={onTryHigher}>Try higher difficulty</button>
+        )}
       </section>
     </div>
   );

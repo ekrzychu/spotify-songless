@@ -27,6 +27,11 @@ export type AnswerView = {
   difficulty: GameDifficulty;
 };
 
+export type SetProgressView = {
+  completed: number;
+  total: number;
+};
+
 export type RoundView = {
   id: string;
   spotifyUri: string;
@@ -35,6 +40,7 @@ export type RoundView = {
   finished: boolean;
   won: boolean;
   attempts: AttemptView[];
+  setProgress?: SetProgressView;
   answer?: AnswerView;
 };
 

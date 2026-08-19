@@ -1,383 +1,250 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  FIRST_SNIPPET_TRANSPORT_MS,
-  PAUSE_CONFIRM_INTERVAL_MS,
   PAUSE_CONFIRM_TIMEOUT_MS,
-  PAUSE_STABILIZATION_MS,
   PLAYBACK_START_TIMEOUT_MS,
+  STABLE_START_WINDOW_MS,
   PlaybackStartTimeoutError,
+  PlaybackTransportFaultError,
   SnippetPlaybackController,
   logicalProgressForTransport,
   snippetTiming,
   spotifyPlaybackStartPayload,
-  spotifyPlaybackPausePayload,
   type SnippetPlayerState,
 } from "@/lib/spotify/snippet-playback";
 
 const URI = "spotify:track:0123456789012345678901";
 const OTHER_URI = "spotify:track:1111111111111111111111";
-const REMOTE_DELAY_MS = 30;
-const OPERATION_DELAY_MS = 30;
-type PlaybackPhase = ReturnType<SnippetPlaybackController["getDebugSnapshot"]>["phase"];
+const OPERATION_DELAY_MS = 20;
 
-describe("snippet playback synchronization", () => {
-  let state: SnippetPlayerState | null;
+describe("audio-gated Spotify snippet transport", () => {
+  let state: SnippetPlayerState;
   let controller: SnippetPlaybackController;
+  let operations: string[];
+  let volume: ReturnType<typeof vi.fn>;
   let pause: ReturnType<typeof vi.fn>;
   let resume: ReturnType<typeof vi.fn>;
   let seek: ReturnType<typeof vi.fn>;
   let primeTrack: ReturnType<typeof vi.fn>;
-  let pauseRemotely: ReturnType<typeof vi.fn>;
   let playing: boolean[];
   let progress: number[];
-  let stopErrors: string[];
+  let errors: string[];
+  let advancePosition: boolean;
+  let positionEpoch: number;
+  let positionBase: number;
 
   function publish(next: SnippetPlayerState): void {
     state = next;
     controller.handleState(next);
   }
 
-  function delayedPublish(update: (current: SnippetPlayerState) => SnippetPlayerState): void {
-    setTimeout(() => {
-      if (state) publish(update(state));
-    }, OPERATION_DELAY_MS);
+  function beginPlaying(uri = URI): void {
+    positionEpoch = Date.now();
+    positionBase = state.position;
+    publish({ ...state, paused: false, track_window: { current_track: { uri } } });
+  }
+
+  function currentState(): SnippetPlayerState {
+    if (!state.paused && advancePosition) {
+      state = { ...state, position: positionBase + Date.now() - positionEpoch };
+    }
+    return state;
   }
 
   beforeEach(() => {
     vi.useFakeTimers();
     state = { paused: true, position: 0, track_window: { current_track: { uri: OTHER_URI } } };
+    operations = [];
     playing = [];
     progress = [];
-    stopErrors = [];
-    pause = vi.fn(async () => delayedPublish((current) => ({ ...current, paused: true })));
-    resume = vi.fn(async () => delayedPublish((current) => ({ ...current, paused: false })));
-    seek = vi.fn(async (positionMs: number) => delayedPublish((current) => ({ ...current, position: positionMs })));
-    pauseRemotely = vi.fn(async () => undefined);
+    errors = [];
+    advancePosition = true;
+    positionEpoch = 0;
+    positionBase = 0;
+    volume = vi.fn(async (value: number) => { operations.push(`volume:${value}`); });
+    pause = vi.fn(async () => {
+      operations.push("pause");
+      setTimeout(() => publish({ ...currentState(), paused: true }), OPERATION_DELAY_MS);
+    });
+    resume = vi.fn(async () => {
+      operations.push("resume");
+      setTimeout(() => beginPlaying(), OPERATION_DELAY_MS);
+    });
+    seek = vi.fn(async (position: number) => {
+      operations.push(`seek:${position}`);
+      setTimeout(() => publish({ ...state, position }), OPERATION_DELAY_MS);
+    });
     controller = new SnippetPlaybackController({
-      activateElement: vi.fn(async () => undefined),
       pause,
       resume,
       seek,
-      getCurrentState: vi.fn(async () => state),
+      setVolume: volume,
+      getCurrentState: vi.fn(async () => currentState()),
     }, {
       onPlaying: (value) => playing.push(value),
       onProgress: (value) => progress.push(value),
-      onStopError: (value) => stopErrors.push(value),
-    }, () => Date.now(), { pauseRemotely });
-    primeTrack = vi.fn(async (signal: AbortSignal) => {
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          publish({ paused: false, position: 0, track_window: { current_track: { uri: URI } } });
-          resolve();
-        }, REMOTE_DELAY_MS);
-        signal.addEventListener("abort", () => {
-          clearTimeout(timeout);
-          reject(new DOMException("Aborted", "AbortError"));
-        }, { once: true });
-      });
+      onStopError: (message) => errors.push(message),
+    }, () => Date.now());
+    primeTrack = vi.fn(async () => {
+      operations.push("remote-play");
+      beginPlaying();
     });
   });
 
   afterEach(() => vi.useRealTimers());
 
-  function requestPlay(logicalDurationMs = 100, prime = primeTrack): Promise<void> {
-    return controller.play({ spotifyUri: URI, logicalDurationMs, primeTrack: prime });
+  function request(durationMs = 100): Promise<void> {
+    return controller.play({ spotifyUri: URI, logicalDurationMs: durationMs, primeTrack });
   }
 
-  async function advanceUntilPhase(target: PlaybackPhase, limitMs = 1_000): Promise<void> {
-    for (let elapsed = 0; elapsed <= limitMs; elapsed += 5) {
-      if (controller.getDebugSnapshot().phase === target) return;
+  async function prepare(durationMs = 100): Promise<void> {
+    const started = request(durationMs);
+    for (let elapsed = 0; elapsed < 1_500 && controller.getDebugSnapshot().phase !== "snippet-playing"; elapsed += 5) {
       await vi.advanceTimersByTimeAsync(5);
     }
-    throw new Error(`Playback never reached phase ${target}; current phase is ${controller.getDebugSnapshot().phase}`);
-  }
-
-  async function finishPreparation(started: Promise<void>): Promise<void> {
-    await advanceUntilPhase("snippet-playing");
-    await started;
-  }
-
-  async function finishFirstSnippet(): Promise<void> {
-    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_INTERVAL_MS + OPERATION_DELAY_MS + PAUSE_STABILIZATION_MS);
-  }
-
-  it("maps the logical 100ms attempt onto a 350ms Spotify transport window", () => {
-    const timing = snippetTiming(100);
-    expect(timing).toEqual({ logicalDurationMs: 100, transportDurationMs: FIRST_SNIPPET_TRANSPORT_MS });
-    expect(logicalProgressForTransport(0, timing)).toBe(0);
-    expect(logicalProgressForTransport(175, timing)).toBe(50);
-    expect(logicalProgressForTransport(350, timing)).toBe(100);
-    expect(logicalProgressForTransport(500, timing)).toBe(100);
-  });
-
-  it.each([1_000, 2_000, 5_000, 10_000, 15_000])("leaves the %dms transport duration unchanged", (durationMs) => {
-    expect(snippetTiming(durationMs)).toEqual({ logicalDurationMs: durationMs, transportDurationMs: durationMs });
-  });
-
-  it("tolerates asynchronous remote, pause, seek, and resume state transitions", async () => {
-    const started = requestPlay();
-    await vi.advanceTimersByTimeAsync(REMOTE_DELAY_MS - 1);
-    expect(controller.getDebugSnapshot().armedUri).toBeNull();
-    await finishPreparation(started);
-
-    expect(primeTrack).toHaveBeenCalledTimes(1);
-    expect(pause).toHaveBeenCalledTimes(1);
-    expect(seek).toHaveBeenCalledExactlyOnceWith(0);
-    expect(resume).toHaveBeenCalledTimes(1);
-    expect(controller.getDebugSnapshot()).toMatchObject({
-      phase: "snippet-playing",
-      requestedUri: URI,
-      armedUri: URI,
-    });
-    expect(playing.at(-1)).toBe(true);
-  });
-
-  it("does not prime-pause a requested URI until Spotify confirms it is actually playing", async () => {
-    primeTrack = vi.fn(async () => {
-      publish({ paused: true, position: 0, track_window: { current_track: { uri: URI } } });
-      setTimeout(() => publish({ paused: false, position: 0, track_window: { current_track: { uri: URI } } }), 120);
-    });
-    const started = requestPlay(100, primeTrack);
-    await vi.advanceTimersByTimeAsync(119);
-    expect(pause).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(pause).toHaveBeenCalledTimes(1);
-    await finishPreparation(started);
-  });
-
-  it("replays locally with one seek and no additional remote load", async () => {
-    const first = requestPlay();
-    await finishPreparation(first);
-    await finishFirstSnippet();
-
-    const replay = requestPlay();
-    expect(progress.at(-1)).toBe(0);
-    await finishPreparation(replay);
-    expect(primeTrack).toHaveBeenCalledTimes(1);
-    expect(seek).toHaveBeenCalledTimes(2);
-    expect(seek.mock.calls.every(([positionMs]) => positionMs === 0)).toBe(true);
-    expect(resume).toHaveBeenCalledTimes(2);
-  });
-
-  it("starts timing only after local resume is confirmed playing", async () => {
-    resume.mockImplementation(async () => undefined);
-    const started = requestPlay();
-    await advanceUntilPhase("snippet-resuming");
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(playing.at(-1)).toBe(false);
-    expect(progress.at(-1)).toBe(0);
-
-    publish({ paused: false, position: 0, track_window: { current_track: { uri: URI } } });
     await started;
     expect(controller.getDebugSnapshot().phase).toBe("snippet-playing");
+  }
+
+  it("uses the logical 100ms duration as the real audible cutoff", () => {
+    expect(snippetTiming(100)).toEqual({ logicalDurationMs: 100, transportDurationMs: 100 });
+    expect(logicalProgressForTransport(50, snippetTiming(100))).toBe(50);
+    expect(logicalProgressForTransport(350, snippetTiming(100))).toBe(100);
   });
 
-  it("defensively primes again if Spotify changed the loaded URI externally", async () => {
-    const first = requestPlay();
-    await finishPreparation(first);
-    await finishFirstSnippet();
-    publish({ paused: true, position: 0, track_window: { current_track: { uri: OTHER_URI } } });
-
-    const second = requestPlay();
-    await finishPreparation(second);
-    expect(primeTrack).toHaveBeenCalledTimes(2);
+  it.each([1_000, 2_000, 5_000, 10_000, 15_000])("keeps the %dms endpoint unchanged", (durationMs) => {
+    expect(snippetTiming(durationMs).transportDurationMs).toBe(durationMs);
   });
 
-  it("retries deadline pause while the requested track remains playing", async () => {
-    const started = requestPlay();
-    await finishPreparation(started);
-    const pausesBeforeDeadline = pause.mock.calls.length;
-    pause.mockImplementation(async () => {
-      if (pause.mock.calls.length >= pausesBeforeDeadline + 2) delayedPublish((current) => ({ ...current, paused: true }));
-    });
-    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + (PAUSE_CONFIRM_INTERVAL_MS * 3));
-    expect(pause).toHaveBeenCalledTimes(pausesBeforeDeadline + 2);
-    expect(stopErrors).toEqual([]);
+  it("runs a silent stable warm-up before pause, seek, volume restore, and resume", async () => {
+    await controller.setUserVolume(0.65);
+    operations = [];
+    await prepare();
+    expect(operations).toEqual([
+      "volume:0", "remote-play", "pause", "seek:0", "volume:0.65", "resume",
+    ]);
   });
 
-  it("does not report stopped when SDK pause resolves but Spotify still reports playing", async () => {
-    const started = requestPlay();
-    await finishPreparation(started);
-    pause.mockImplementation(async () => undefined);
-    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_INTERVAL_MS + 1);
-    expect(controller.getDebugSnapshot().phase).toBe("snippet-pausing");
-    expect(playing.at(-1)).toBe(true);
-    expect(stopErrors).toEqual([]);
-  });
-
-  it("uses the remote pause fallback and still waits for SDK confirmation", async () => {
-    const started = requestPlay();
-    await finishPreparation(started);
-    pause.mockImplementation(async () => undefined);
-    pauseRemotely.mockImplementation(async () => delayedPublish((current) => ({ ...current, paused: true })));
-    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_TIMEOUT_MS);
-    expect(pauseRemotely).toHaveBeenCalledTimes(1);
-    expect(stopErrors).toEqual([]);
-    expect(playing.at(-1)).toBe(false);
-    expect(controller.getDebugSnapshot().phase).toBe("armed");
-  });
-
-  it("catches a late start during prime-pause stabilization before seeking", async () => {
-    let primePauseCalls = 0;
-    pause.mockImplementation(async () => {
-      primePauseCalls += 1;
-      delayedPublish((current) => ({ ...current, paused: true }));
-      if (primePauseCalls === 1) {
-        setTimeout(() => {
-          if (state) publish({ ...state, paused: false });
-        }, OPERATION_DELAY_MS + 30);
-      }
-    });
-    const started = requestPlay();
-    await finishPreparation(started);
-    expect(primePauseCalls).toBe(2);
-    expect(seek).toHaveBeenCalledTimes(1);
-  });
-
-  it("coalesces rapid Play requests into one remote preparation", async () => {
-    const first = requestPlay();
-    const second = requestPlay();
-    await finishPreparation(first);
-    await second;
-    expect(primeTrack).toHaveBeenCalledTimes(1);
-    expect(resume).toHaveBeenCalledTimes(1);
-  });
-
-  it("bounds deadline pause retries and reports a genuine failure", async () => {
-    const started = requestPlay();
-    await finishPreparation(started);
-    const pausesBeforeDeadline = pause.mock.calls.length;
-    pause.mockImplementation(async () => undefined);
-    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS + PAUSE_CONFIRM_TIMEOUT_MS + 100);
-    expect(pause).toHaveBeenCalledTimes(pausesBeforeDeadline + 3);
-    expect(pauseRemotely).toHaveBeenCalledTimes(1);
-    expect(stopErrors).toHaveLength(1);
-    expect(playing.at(-1)).toBe(true);
-
-    pause.mockImplementation(async () => delayedPublish((current) => ({ ...current, paused: true })));
-    const retry = controller.stop(false);
-    await vi.advanceTimersByTimeAsync(PAUSE_CONFIRM_INTERVAL_MS + OPERATION_DELAY_MS + PAUSE_STABILIZATION_MS);
-    await expect(retry).resolves.toBe(true);
-    expect(playing.at(-1)).toBe(false);
-  });
-
-  it("a stale snippet stop cannot pause a newer run", async () => {
-    const first = requestPlay();
-    await finishPreparation(first);
-    pause.mockImplementation(async () => undefined);
-    await vi.advanceTimersByTimeAsync(FIRST_SNIPPET_TRANSPORT_MS);
-    const pausesAtDeadline = pause.mock.calls.length;
-
-    pause.mockImplementation(async () => delayedPublish((current) => ({ ...current, paused: true })));
-    const replay = requestPlay(1_000);
-    await finishPreparation(replay);
-    expect(pause).toHaveBeenCalledTimes(pausesAtDeadline + 1);
-    expect(stopErrors).toEqual([]);
-  });
-
-  it("bounds a remote load that never makes the requested URI current", async () => {
-    const started = requestPlay(100, vi.fn(async () => undefined));
-    const rejection = expect(started).rejects.toBeInstanceOf(PlaybackStartTimeoutError);
-    await vi.advanceTimersByTimeAsync(PLAYBACK_START_TIMEOUT_MS);
-    await rejection;
-    expect(resume).not.toHaveBeenCalled();
-    expect(controller.getDebugSnapshot()).toMatchObject({ phase: "failed", armedUri: null });
-  });
-
-  it.each([
-    ["prime-seeking", "seeking"],
-    ["snippet-resuming", "resuming"],
-  ] as const)("honors Spotify disallows.%s state restrictions", async (targetPhase, restriction) => {
-    const originalPublish = publish;
+  it("rejects a transient forward state that resets before stable playback", async () => {
+    advancePosition = false;
     primeTrack = vi.fn(async () => {
-      const disallows = { [restriction]: true };
-      originalPublish({ paused: false, position: 0, disallows, track_window: { current_track: { uri: URI } } });
+      operations.push("remote-play");
+      publish({ paused: false, position: 0, track_window: { current_track: { uri: URI } } });
     });
-    if (restriction === "seeking") pause.mockImplementation(async () => delayedPublish((current) => ({ ...current, paused: true })));
-    if (restriction === "resuming") {
-      pause.mockImplementation(async () => delayedPublish((current) => ({ ...current, paused: true })));
-      seek.mockImplementation(async () => delayedPublish((current) => ({ ...current, position: 0 })));
-    }
-    const started = requestPlay(100, primeTrack);
-    const rejection = expect(started).rejects.toThrow(new RegExp(`disallows .*phase ${targetPhase}`));
-    await vi.advanceTimersByTimeAsync(1_000);
-    await rejection;
-    expect(controller.getDebugSnapshot()).toMatchObject({ phase: "failed", armedUri: null });
-  });
-
-  it.each([
-    ["prime-seeking", "seek", "Mock seek rejection"],
-    ["snippet-resuming", "resume", "Mock resume rejection"],
-  ] as const)("invalidates the arm when %s fails", async (targetPhase, operation, message) => {
-    const failing = vi.fn(async () => { throw new Error(message); });
-    if (operation === "seek") seek = failing;
-    else resume = failing;
-    controller = new SnippetPlaybackController({
-      activateElement: vi.fn(async () => undefined), pause, resume, seek,
-      getCurrentState: vi.fn(async () => state),
-    }, {
+    const origin = Date.now();
+    const getCurrentState = vi.fn(async () => {
+      const elapsed = Date.now() - origin;
+      const position = elapsed < 300 ? elapsed : elapsed - 300;
+      state = { ...state, position };
+      return state;
+    });
+    controller = new SnippetPlaybackController({ pause, resume, seek, setVolume: volume, getCurrentState }, {
       onPlaying: (value) => playing.push(value), onProgress: (value) => progress.push(value),
     }, () => Date.now());
-
-    const started = requestPlay();
-    const rejection = expect(started).rejects.toThrow(message);
-    await vi.advanceTimersByTimeAsync(1_000);
-    await rejection;
-    expect(failing).toHaveBeenCalledTimes(1);
-    expect(controller.getDebugSnapshot()).toMatchObject({ phase: "failed", armedUri: null });
-    expect(playing.at(-1)).toBe(false);
-    expect(targetPhase).toContain(operation === "seek" ? "seeking" : "resuming");
+    const started = request();
+    await vi.advanceTimersByTimeAsync(700);
+    expect(pause).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(600);
+    await started;
+    expect(pause.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
-  it.each(["remote-loading", "prime-pausing", "prime-seeking", "snippet-resuming"] as const)(
-    "preserves SDK errors and aborts without a competing stop during %s",
-    async (targetPhase) => {
-      if (targetPhase === "prime-seeking") {
-        seek.mockImplementation(async () => undefined);
-        primeTrack = vi.fn(async () => {
-          await new Promise<void>((resolve) => setTimeout(() => {
-            publish({ paused: false, position: 240, track_window: { current_track: { uri: URI } } });
-            resolve();
-          }, REMOTE_DELAY_MS));
-        });
-      }
-      const started = requestPlay();
-      await advanceUntilPhase(targetPhase);
-      const pausesAtFailure = pause.mock.calls.length;
-      const failure = controller.failFromSdk("Mock Spotify playback failure");
-      expect(failure).toMatchObject({ phase: targetPhase, message: "Mock Spotify playback failure", requestedUri: URI });
-      expect(controller.getDebugSnapshot()).toEqual({
-        phase: "failed", requestedUri: URI, armedUri: null, sdkError: "Mock Spotify playback failure",
-      });
-      expect(playing.at(-1)).toBe(false);
-      await vi.advanceTimersByTimeAsync(PLAYBACK_START_TIMEOUT_MS + 1_000);
-      await started;
-      expect(pause).toHaveBeenCalledTimes(pausesAtFailure);
-      expect(playing.at(-1)).toBe(false);
-    },
-  );
-
-  it("resets progress when an active snippet is stopped", async () => {
-    const started = requestPlay(1_000);
-    await finishPreparation(started);
-    await vi.advanceTimersByTimeAsync(300);
-    expect(progress.at(-1)).toBeGreaterThanOrEqual(300);
-    const stopping = controller.stop(true);
-    await vi.advanceTimersByTimeAsync(PAUSE_CONFIRM_INTERVAL_MS + OPERATION_DELAY_MS + PAUSE_STABILIZATION_MS);
-    await expect(stopping).resolves.toBe(true);
-    expect(progress.at(-1)).toBe(0);
+  it("mutes at 100ms even while pause confirmation is still pending", async () => {
+    await prepare();
+    const volumeCalls = volume.mock.calls.length;
+    pause.mockImplementation(async () => { operations.push("pause"); });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(volume.mock.calls[volumeCalls]).toEqual([0]);
+    expect(controller.getDebugSnapshot()).toMatchObject({ phase: "snippet-pausing", transportMuted: true });
     expect(playing.at(-1)).toBe(false);
   });
 
-  it("builds a position-zero request for the only remote load", () => {
-    expect(spotifyPlaybackStartPayload("device", URI)).toEqual({
-      deviceId: "device",
-      spotifyUri: URI,
-      positionMs: 0,
+  it("stays muted and blocks new playback when pause cannot be confirmed", async () => {
+    await prepare();
+    pause.mockImplementation(async () => { operations.push("pause"); });
+    await vi.advanceTimersByTimeAsync(100 + PAUSE_CONFIRM_TIMEOUT_MS + 100);
+    expect(controller.getDebugSnapshot()).toMatchObject({ phase: "failed", transportMuted: true, transportFaulted: true });
+    expect(volume.mock.calls.at(-1)).toEqual([0]);
+    expect(errors).toHaveLength(1);
+    await expect(request()).rejects.toBeInstanceOf(PlaybackTransportFaultError);
+  });
+
+  it("repairs a failed silent transport through bounded local pause only", async () => {
+    await prepare();
+    pause.mockImplementation(async () => undefined);
+    await vi.advanceTimersByTimeAsync(100 + PAUSE_CONFIRM_TIMEOUT_MS + 100);
+    pause.mockImplementation(async () => {
+      setTimeout(() => publish({ ...state, paused: true }), OPERATION_DELAY_MS);
     });
+    const repair = controller.stop();
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(repair).resolves.toBe(true);
+    expect(controller.getDebugSnapshot()).toMatchObject({ transportMuted: false, transportFaulted: false });
+    expect(volume.mock.calls.at(-1)).toEqual([0.65]);
   });
 
-  it("builds a device-targeted remote pause request", () => {
-    expect(spotifyPlaybackPausePayload("device")).toEqual({ deviceId: "device" });
+  it("replay seeks to zero without another remote load", async () => {
+    await prepare();
+    await vi.advanceTimersByTimeAsync(400);
+    const replay = request(1_000);
+    await vi.advanceTimersByTimeAsync(400);
+    await replay;
+    expect(primeTrack).toHaveBeenCalledTimes(1);
+    expect(seek).toHaveBeenCalledTimes(2);
+    expect(seek.mock.calls.every(([position]) => position === 0)).toBe(true);
+  });
+
+  it("extends a playing 100ms snippet to the absolute 1s endpoint without restart", async () => {
+    await prepare();
+    const resumeCalls = resume.mock.calls.length;
+    const seekCalls = seek.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60);
+    expect(controller.extendActiveSnippet(1_000)).toBe(true);
+    await vi.advanceTimersByTimeAsync(939);
+    expect(controller.getDebugSnapshot().phase).toBe("snippet-playing");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(volume.mock.calls.at(-1)).toEqual([0]);
+    expect(resume).toHaveBeenCalledTimes(resumeCalls);
+    expect(seek).toHaveBeenCalledTimes(seekCalls);
+  });
+
+  it("extends 1s to absolute 2s and handles rapid monotonic extensions", async () => {
+    await prepare(1_000);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(controller.extendActiveSnippet(2_000)).toBe(true);
+    expect(controller.extendActiveSnippet(5_000)).toBe(true);
+    expect(controller.extendActiveSnippet(2_000)).toBe(false);
+    await vi.advanceTimersByTimeAsync(4_599);
+    expect(controller.getDebugSnapshot().phase).toBe("snippet-playing");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(volume.mock.calls.at(-1)).toEqual([0]);
+  });
+
+  it("does not extend or autoplay while paused", async () => {
+    expect(controller.extendActiveSnippet(1_000)).toBe(false);
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it("restores the newest user volume selected while transport-muted", async () => {
+    await prepare();
+    pause.mockImplementation(async () => {
+      setTimeout(() => publish({ ...state, paused: true }), 200);
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    await controller.setUserVolume(0.3);
+    expect(volume.mock.calls.at(-1)).toEqual([0]);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(volume.mock.calls.at(-1)).toEqual([0.3]);
+  });
+
+  it("bounds a remote load that never stabilizes", async () => {
+    primeTrack = vi.fn(async () => undefined);
+    const started = request();
+    const rejected = expect(started).rejects.toBeInstanceOf(PlaybackStartTimeoutError);
+    await vi.advanceTimersByTimeAsync(PLAYBACK_START_TIMEOUT_MS + STABLE_START_WINDOW_MS);
+    await rejected;
+  });
+
+  it("builds the only remote command at position zero", () => {
+    expect(spotifyPlaybackStartPayload("device", URI)).toEqual({ deviceId: "device", spotifyUri: URI, positionMs: 0 });
   });
 });
