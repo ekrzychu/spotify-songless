@@ -1,108 +1,411 @@
 # spodle
 
-spodle is an unlimited Spotify song-guessing game. Each failed guess or skip unlocks a longer intro: 0.1, 1, 2, 5, 10, then 15 seconds. Difficulty comes only from imported, verified lifetime stream counts; unranked tracks are never used in ranked play.
+**spodle** is an unlimited Spotify song-guessing game built with Next.js, React, Prisma and SQLite.
 
-## Requirements
+A round starts with a very short intro. Every wrong guess or skip unlocks a longer stage:
 
-- Node.js 20.11 or newer
+```text
+0.1s → 1s → 2s → 5s → 10s → 15s
+```
+
+The game supports:
+
+- Spotify Web Playback SDK playback
+- six unlimited-play guessing stages
+- local song search while guessing — no live Spotify Search request is needed for autocomplete
+- categories by genre and decade
+- ranked difficulties based on verified lifetime Spotify stream counts
+- an **Unranked** mode for populated songs that do not yet have verified stream counts
+- per-set progress and resettable completion history
+- automatic difficulty assignment after Soundcharts enrichment
+- local SQLite storage through Prisma
+
+Ranked difficulty thresholds are:
+
+| Difficulty | Verified lifetime Spotify streams |
+| --- | ---: |
+| Easy | `>= 1,000,000,000` |
+| Normal | `>= 250,000,000` |
+| Hard | `>= 50,000,000` |
+| Extreme | `>= 10,000,000` |
+| Impossible | `< 10,000,000` |
+| Unranked | no verified stream count/difficulty yet |
+
+Successfully enriching an Unranked track automatically removes it from the Unranked pool and makes it available in the correct ranked difficulty. No manual move or migration is required.
+
+---
+
+## Fresh clone: what is and is not included
+
+The Git repository contains the application code, Prisma schema and npm lockfile.
+
+A fresh clone **does not** contain:
+
+- `.env.local`
+- your Spotify or Soundcharts credentials
+- `dev.db`
+- previously populated songs
+- `.runtime/catalog-populate-checkpoint.json`
+- your local game/session progress
+
+Those files are intentionally ignored by Git.
+
+This means somebody cloning the repository today must:
+
+1. install Node.js dependencies
+2. create `.env.local`
+3. configure a Spotify Developer application
+4. create the local SQLite database
+5. populate Spotify tracks into the local catalog
+6. optionally enrich tracks with Soundcharts to create ranked difficulties
+7. start the application
+
+### Do I need a `.venv`?
+
+**No.**
+
+spodle is a Node.js/TypeScript application, not a Python application. Do not create a Python `.venv` for this project.
+
+Dependencies are installed into `node_modules` with npm. The repository includes `package-lock.json`, so `npm ci` is the preferred installation command for a fresh clone.
+
+---
+
+# Requirements
+
+Required:
+
+- **Node.js 20.11.0 or newer**
 - npm
-- A Spotify Premium account
-- A Spotify Developer application
-- A verified external source of Spotify lifetime stream counts
+- Git
+- a Spotify Premium account
+- a Spotify Developer application
 
-The app uses SQLite through Prisma for local development. It does not download, proxy, modify, or store Spotify audio.
+Optional, but required for automatic ranked-difficulty enrichment:
 
-## Spotify Dashboard
+- Soundcharts API client credentials
 
-In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), configure the application with:
+Spotify does not provide lifetime stream counts through the normal Spotify Web API, so ranked play requires verified stream-count data from Soundcharts or an imported verified CSV.
 
-- Web API
-- Web Playback SDK
-- Redirect URI: `http://127.0.0.1:3000/api/auth/spotify/callback`
+The app does not download, proxy, modify or store Spotify audio.
 
-Under **User Management**, add every Spotify account that will test the Development Mode application. Spotify Development Mode currently requires Premium and limits authorized users.
+---
 
-The redirect URI must match exactly. Do not replace `127.0.0.1` with `localhost` or a LAN address, and do not derive it from the browser hostname.
+# Installation
 
-## Windows environment setup
+## Windows
 
-From PowerShell in the project directory, create the local environment file:
+### 1. Install Git and Node.js
+
+If you do not already have them, one option on Windows 10/11 is `winget`:
+
+```powershell
+winget install Git.Git
+winget install OpenJS.NodeJS.LTS
+```
+
+Close and reopen PowerShell after installation, then verify:
+
+```powershell
+git --version
+node --version
+npm --version
+```
+
+`node --version` must be at least `v20.11.0`.
+
+### 2. Clone the repository
+
+```powershell
+git clone https://github.com/ekrzychu/spotify-songless.git
+Set-Location spotify-songless
+```
+
+### 3. Install dependencies
+
+```powershell
+npm ci
+```
+
+### 4. Create the environment file
 
 ```powershell
 Copy-Item .env.example .env.local
 notepad .env.local
 ```
 
-Configure these values:
+Continue with [Environment configuration](#environment-configuration).
+
+---
+
+## Linux
+
+Install Git, Node.js 20.11+ and npm with the method appropriate for your distribution.
+
+For example, on Arch Linux:
+
+```bash
+sudo pacman -S git nodejs npm
+```
+
+On distributions whose default repository ships an older Node.js release, install a current Node.js LTS release through your preferred Node version manager or the official Node.js distribution method instead.
+
+Verify:
+
+```bash
+git --version
+node --version
+npm --version
+```
+
+`node --version` must be at least `v20.11.0`.
+
+### Clone and install
+
+```bash
+git clone https://github.com/ekrzychu/spotify-songless.git
+cd spotify-songless
+npm ci
+cp .env.example .env.local
+```
+
+Edit the environment file with your preferred editor, for example:
+
+```bash
+nano .env.local
+```
+
+Continue with [Environment configuration](#environment-configuration).
+
+---
+
+## macOS
+
+Install Git and Node.js 20.11+.
+
+If you use Homebrew:
+
+```bash
+brew install git node
+```
+
+Verify:
+
+```bash
+git --version
+node --version
+npm --version
+```
+
+`node --version` must be at least `v20.11.0`.
+
+### Clone and install
+
+```bash
+git clone https://github.com/ekrzychu/spotify-songless.git
+cd spotify-songless
+npm ci
+cp .env.example .env.local
+```
+
+Edit `.env.local` with your preferred editor.
+
+Continue with [Environment configuration](#environment-configuration).
+
+---
+
+# Environment configuration
+
+The repository contains `.env.example` with the currently supported variables:
 
 ```env
 SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
 SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/api/auth/spotify/callback
-SESSION_SECRET=
+SESSION_SECRET=replace-with-at-least-32-random-characters
 DATABASE_URL=file:./dev.db
 ALLOWED_DEV_ORIGINS=127.0.0.1,192.168.0.15
 SPOTIFY_MARKET=US
-```
-
-`SESSION_SECRET` must be a random value of at least 32 characters. Never commit `.env.local` or share its contents.
-
-`ALLOWED_DEV_ORIGINS` is a comma-separated list of additional hostnames allowed to request Next.js development assets. The defaults already include `127.0.0.1` and `192.168.0.15`; the variable lets another local development hostname be added deliberately. It does not alter Spotify OAuth and has no effect on production CORS.
-
-`SPOTIFY_MARKET` defaults to `US` and is used by catalog discovery unless `--market` overrides it for one run.
-
-Soundcharts credentials are used only by the optional server-side diagnostic. Put them in `.env.local`, never in browser code:
-
-```env
 SOUNDCHARTS_CLIENT_ID=
 SOUNDCHARTS_CLIENT_SECRET=
 SOUNDCHARTS_QUOTA_RESERVE=50
 SOUNDCHARTS_DEBUG=false
 ```
 
-## Initial installation
+## Generate `SESSION_SECRET`
 
-```powershell
-npm install
+This command works on Windows, Linux and macOS as long as Node.js is installed:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Copy the generated value into:
+
+```env
+SESSION_SECRET=<generated-value>
+```
+
+Never commit `.env.local` or paste its contents into issues, logs or chat messages.
+
+## Required Spotify values
+
+Set:
+
+```env
+SPOTIFY_CLIENT_ID=<your-client-id>
+SPOTIFY_CLIENT_SECRET=<your-client-secret>
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:3000/api/auth/spotify/callback
+DATABASE_URL=file:./dev.db
+SPOTIFY_MARKET=US
+```
+
+`SPOTIFY_MARKET` is a two-letter market such as `US` or `PL`. It is used during Spotify catalog discovery unless a population command overrides it with `--market=XX`.
+
+`ALLOWED_DEV_ORIGINS` is only for additional Next.js development hosts. It does **not** change Spotify OAuth. The Spotify redirect URI must remain the exact configured callback.
+
+## Optional Soundcharts values
+
+If you want automatic stream-count enrichment, also configure:
+
+```env
+SOUNDCHARTS_CLIENT_ID=<your-client-id>
+SOUNDCHARTS_CLIENT_SECRET=<your-client-secret>
+SOUNDCHARTS_QUOTA_RESERVE=50
+SOUNDCHARTS_DEBUG=false
+```
+
+If these are left empty, the app can still use populated tracks in **Unranked** mode. Ranked difficulties require verified stream counts from Soundcharts or CSV import.
+
+---
+
+# Spotify Developer Dashboard setup
+
+Open the Spotify Developer Dashboard and configure the application for:
+
+- Web API
+- Web Playback SDK
+
+Add this redirect URI **exactly**:
+
+```text
+http://127.0.0.1:3000/api/auth/spotify/callback
+```
+
+Do not replace `127.0.0.1` with `localhost`.
+
+For Spotify Development Mode, add every Spotify account that will test the application under the app's user-management settings. Playback requires Spotify Premium.
+
+---
+
+# Create the local database
+
+After `.env.local` is configured, run:
+
+```bash
 npm run db:push
 ```
 
-`db:push` loads `.env.local`, creates the SQLite file when necessary, and applies the Prisma schema. Existing `dev.db` data does not need to be deleted; the session-unavailable-track table is an additive schema change.
+This creates/synchronizes the local SQLite database and generates the Prisma client.
 
-## Development
-
-```powershell
-npm run dev
-```
-
-Open exactly:
+The database is stored locally as:
 
 ```text
-http://127.0.0.1:3000
+dev.db
 ```
 
-The OAuth flow uses Authorization Code with PKCE, short-lived integrity-protected authorization attempts, encrypted HTTP-only token storage, and automatic refresh. The browser receives only the short-lived access token required by the Web Playback SDK. The client secret and refresh token remain server-side.
+`dev.db` is intentionally ignored by Git.
 
-## Populate the Spotify catalog
+## Fresh install: do I need the backfill commands?
 
-```powershell
+Normally, **no**.
+
+A fresh empty database populated by the current code already receives the current:
+
+- decade associations
+- gameplay eligibility state
+- language classification/eligibility state
+- category rows
+
+The `catalog:backfill-*` commands exist mainly for upgrading older local databases created by previous versions of spodle.
+
+For a brand-new installation, the normal sequence is simply:
+
+```text
+npm ci
+→ configure .env.local
+→ npm run db:push
+→ populate catalog
+→ optionally enrich streams
+→ npm run dev
+```
+
+---
+
+# Populate the Spotify catalog
+
+A brand-new database contains **zero songs**. Catalog population is therefore required before normal gameplay can select tracks.
+
+## 1. Check the current catalog
+
+```bash
 npm run catalog:status
-npm run catalog:audit-genres
+```
+
+On a completely fresh installation, the track counts should initially be zero.
+
+## 2. Preview the population plan
+
+```bash
 npm run catalog:populate -- --plan
+```
+
+Plan mode is local-only. It does not request a Spotify access token and does not call Spotify Search.
+
+## 3. Populate tracks
+
+A practical first target is 5,000 tracks:
+
+```bash
+npm run catalog:populate -- --target=5000 --max-requests=500
+```
+
+To grow the catalog further later:
+
+```bash
 npm run catalog:populate -- --target=20000 --max-requests=500
 ```
 
-Catalog discovery uses deterministic active-genre-by-release-year shards from 1970 through the current UTC year. It processes the lowest checkpointed offset first, giving every genre/year shard broad coverage before going deeper. Spotify Search requests remain sequential and use pages of at most 10.
+The command stops cleanly when it reaches its request budget, target, Spotify quota limit or an intentional interruption.
 
-Progress is saved after every completed Spotify page at:
+If it stops before the target, simply rerun the **same command** later:
+
+```bash
+npm run catalog:populate -- --target=20000 --max-requests=500
+```
+
+Do not reset the checkpoint just because a run stopped.
+
+## Population checkpoint
+
+Progress is saved after completed Spotify Search pages in:
 
 ```text
 .runtime/catalog-populate-checkpoint.json
 ```
 
-Rerunning the same command resumes from that checkpoint. The default target is 20,000 unique database tracks, but each execution is capped at 500 Spotify Search page requests. Reaching that request budget is a clean resumable stop, not an error.
+The checkpoint is local and ignored by Git.
 
-Available controls are:
+Rerunning catalog population resumes from that checkpoint.
+
+Use:
+
+```text
+--reset-checkpoint
+```
+
+only when you intentionally want to create a new population run identity, for example after deliberately changing the population market or year range.
+
+## Population options
 
 ```text
 --target=20000
@@ -116,163 +419,538 @@ Available controls are:
 --reset-checkpoint
 ```
 
-`--max-per-shard` can be increased on a later run without resetting progress. Use `--reset-checkpoint` only when intentionally changing checkpoint identity such as the market or year range. Plan mode reads only the local database and checkpoint; it does not request a Spotify access token or call Spotify Search.
+The defaults currently include:
 
-`npm run catalog:status` is also local-only. It reports total/playable, game-eligible/game-ineligible, gameplay-ranked, and raw ranked/unranked counts plus active genre and decade pool coverage and a separate language-policy section. Historical removed-category relations are not included in active pool reporting.
+- target: `20,000`
+- first year: `1970`
+- last year: current UTC year
+- maximum results considered per genre/year shard: `100`
+- Spotify Search page size: `10`
+- maximum requests per run: `500`
+- delay between requests: `300ms`
 
-`npm run catalog:audit-genres` is a read-only SQLite audit. It contacts neither Spotify nor Soundcharts, requests no OAuth token, and never modifies category relations. The report shows active-genre overlap counts, samples of classical crossover associations, and a conservative title-based track-quality audit. Overlaps are evidence for review, not automatic declarations that a relation is incorrect. Historical relations do not contain Spotify search-shard provenance, so the audit does not invent it.
+---
 
-Catalog population does not spend Soundcharts quota, does not call Soundcharts, does not assign difficulty, and does not invent stream counts. New tracks remain unranked until verified stream counts are imported. A fixed request count cannot guarantee 20,000 tracks because Spotify page exhaustion and duplicate track IDs vary by shard.
+# How Spotify songs are collected
 
-Spotify rate limits use importer-specific bounded retries. A `QUOTA_EXCEEDED` response stops cleanly with the last completed-page checkpoint preserved for a later rerun.
+Catalog population is **not random**.
 
-Decade membership is derived from each track's Spotify release date during ingestion, so catalog population only performs genre searches. To reconcile decade associations for tracks already in the local database without contacting Spotify, run:
+spodle creates deterministic Spotify Search shards for each active genre and year.
 
-```powershell
-npm run catalog:backfill-decades
+Current search genres are:
+
+```text
+Pop                  genre:pop
+Rock                 genre:rock
+Hip-Hop / Rap        genre:hip-hop
+R&B / Soul           genre:r-n-b
+Electronic / Dance   genre:electronic
+Classical            genre:classical
 ```
 
-The backfill preserves genre associations, upserts the matching decade relation for release years from 1970 through 2029, removes stale decade relations, and prints the resulting count for every decade.
+For every year from 1970 through the current UTC year, the importer creates searches such as:
 
-Gameplay suitability is stored separately from Spotify playability. `playable` continues to mean that Spotify can play the track for the current workflow; `gameEligible` is derived from the conservative title-quality classifier and is required by normal round selection. After applying the additive schema fields with `npm run db:push`, reconcile all existing tracks locally with:
-
-```powershell
-npm run catalog:backfill-game-eligibility
+```text
+genre:rock year:1977
+genre:pop year:2005
+genre:electronic year:2014
+genre:classical year:2020
 ```
 
-This deterministic backfill reads and updates SQLite only. It reports scanned, eligible, excluded, updated, and per-reason counts. It changes only `gameEligible`; existing stream counts, difficulty, Soundcharts provenance, and category relations are preserved.
+Population is breadth-first by checkpoint offset. In simplified form:
 
-Normal gameplay and Soundcharts enrichment also use a separate language policy. Unclassified, unknown, and uncertain tracks are accepted; classified `en`, `pl`, and `es` tracks are accepted; a track is rejected only when it is classified as another language. After first applying the additive language fields, or whenever policy logic changes, reconcile existing tracks locally with:
-
-```powershell
-npm run catalog:backfill-languages
+```text
+first page from each genre/year shard
+→ next page from each still-active shard
+→ next page
+→ ...
 ```
 
-Language precedence is a Spotify-ID manual override in `rules/language_overrides.json`, a trustworthy explicit provider value when one is available, the local `tinyld` detector, then unknown. Spotify currently supplies no trusted lyric-language field to this ingestion path. Detection uses the title and album title after removing common version markers. It requires at least 12 letters, three tokens, detector confidence 0.65, and a 0.20 lead over the next result. Short or uncertain metadata remains explicitly unclassified but accepted. This heuristic describes metadata language; it is not verified lyric language. Audit classifications without writes or network access with `npm run catalog:audit-languages`.
+Spotify Search pages are requested sequentially, at up to 10 tracks per page.
 
-## Verify Soundcharts access
+The importer itself does not randomly shuffle the Spotify Search results and does not build a global popularity ranking. Spotify decides the order of results returned for each genre/year query.
 
-To test Soundcharts resolution and Spotify audience access against 10 deterministic, unranked catalog tracks, run:
+Duplicate Spotify track IDs are upserted rather than inserted as duplicate database tracks.
 
-```powershell
-npm run soundcharts:test
+Decade categories are derived from the Spotify release date stored during ingestion. Because release metadata can represent a reissue/remaster, decade data is intentionally kept separate from Soundcharts release-date metadata.
+
+---
+
+# What happens immediately after population?
+
+Newly populated tracks normally have:
+
+```text
+streamCount = null
+difficulty = null
 ```
 
-Use a smaller diagnostic batch with `npm run soundcharts:test -- --limit 5`; values above 10 are clamped to 10. The command uses the current client-credentials flow, performs no database writes, and prints explicit OAuth/customer/retry telemetry. Soundcharts song-level Spotify audience values are cumulative Spotify stream counts.
+They are therefore **Unranked**.
 
-HTTP request totals are not treated as quota consumption. Quota remaining is reported only when Soundcharts supplies a valid `x-quota-remaining` header on a customer API response. `SOUNDCHARTS_DEBUG=true` enables sanitized endpoint-family, status, quota-header, and retry diagnostics without logging credentials or tokens.
+If they pass the normal playback, game-eligibility and language-policy filters, they can already be played in:
 
-## Enrich stream counts from Soundcharts
-
-Plan a neutral deterministic batch before making any external requests:
-
-```powershell
-npm run streams:plan:soundcharts -- --limit=100
+```text
+Difficulty → Unranked
 ```
 
-The planner reads SQLite only: it requests no OAuth token, makes no Spotify or Soundcharts requests, and performs no database writes. It prints raw ranked counts separately from the category-by-difficulty gameplay matrix. Coverage and thin cells are reporting only. Normal enrichment targets require Spotify playability, persistent track eligibility, and `languageEligible=true`; this accepts unknown/unclassified tracks plus classified `en`, `pl`, and `es`, while rejecting classified other languages. Candidate difficulty remains unknown until verified Soundcharts stream counts are returned.
+This makes it possible to use a large freshly populated catalog before every track has been enriched with stream counts.
 
-The default reporting target is 10 ranked tracks per active category/difficulty cell. `--target-per-cell=N` changes reporting only and never candidate selection. Use `--limit=N` or `--verbose` to adjust output. Previously resolved groups that still have no audience value are reported but excluded by default; include them deliberately with `--include-cached-unranked`. Definitive resolver misses are stored separately in `soundchartsNotFoundAt` and excluded when every current group target is marked; retry them only with `--include-not-found`.
+The current language policy is:
 
-Obvious non-song-like recording groups are also excluded from planning and enrichment by default. The conservative rules cover explicit skit, interview/entrevista, commentary, spoken-word, dialogue, and voice-memo/note markers after case, punctuation, diacritic, and whitespace normalization. Generic musical terms such as intro, outro, instrumental, mix, remix, live, demo, edit, remaster, and version are not excluded. `The Interview` remains an explicit eligible exact title; other interview markers at a title boundary are excluded as a documented conservative tradeoff. Use `--include-non-songlike` for deliberate debugging or manual review; the default exclusion is recommended for normal enrichment.
+```text
+unknown / uncertain        → accepted
+en / pl / es               → accepted
+classified other language  → rejected
+```
 
-Start real enrichment with one canary recording group:
+Obvious non-song items caught by the conservative local classifier are also excluded from normal gameplay.
 
-```powershell
+---
+
+# Rank tracks with Soundcharts
+
+Soundcharts enrichment is optional for Unranked play, but required if you want the automatically assigned ranked difficulties.
+
+## 1. Check the offline plan
+
+```bash
+npm run streams:plan:soundcharts -- --limit=25
+```
+
+This command:
+
+- reads SQLite only
+- does not request a Soundcharts OAuth token
+- makes no Spotify request
+- makes no Soundcharts customer request
+- performs no database writes
+
+The planner reports how many fresh eligible recording groups remain.
+
+## 2. Run one canary first
+
+```bash
 npm run streams:enrich:soundcharts -- --canary
 ```
 
-Canary mode selects exactly one recording group, disables refresh, and permits at most three customer API attempts. The OAuth token request is tracked separately and is not part of that three-request budget. Inspect its telemetry before running a small batch such as:
+Canary mode attempts one recording group with a small customer-request budget. Inspect the quota telemetry before starting a larger run.
 
-```powershell
-npm run streams:enrich:soundcharts -- --limit=10 --max-api-requests=30
+## 3. Enrich a normal batch
+
+A conservative normal batch is:
+
+```bash
+npm run streams:enrich:soundcharts -- --limit=25 --max-api-requests=75
 ```
 
-Execution uses the exact same neutral deterministic selector as the planner. After eligibility filtering, groups are ordered by the number of eligible local targets represented, valid normalized ISRC availability, then the stable hash/key comparison. Genre, decade, difficulty-cell deficit, and `target-per-cell` values do not affect selection or order.
+Run it again whenever you want to rank more songs and the Soundcharts quota permits it.
 
-The default execution limit is 100 groups, the maximum is 400, and the default hard customer API request budget is 300. Every customer attempt, including a 429 retry, consumes that execution budget; the OAuth request does not. The client does not call `/api/v2/team/usage` automatically. `SOUNDCHARTS_QUOTA_RESERVE` is enforced only after a valid quota header has been observed, while the hard request budget protects runs whose quota remains unknown.
+You do **not** need to enrich the entire catalog before using the application.
 
-Tracks with existing stream counts are skipped. Local Spotify versions sharing a normalized ISRC are processed as one recording group, identical Soundcharts stream values across Spotify identifiers are counted once, and successful values use the centralized difficulty classifier.
+## Automatic Unranked → ranked transition
 
-An explicit refresh updates missing tracks plus values whose current source is Soundcharts; CSV-owned values remain untouched:
+If a track starts as:
 
-```powershell
-npm run streams:enrich:soundcharts -- --limit 100 --refresh
+```text
+streamCount = null
+difficulty = null
 ```
 
-Resolved songs without audience data retain a null stream count and difficulty. The Soundcharts UUID is cached so a deliberate later attempt can skip identifier resolution; these cached-unranked groups remain excluded unless `--include-cached-unranked` is supplied.
+it is available in Unranked mode.
 
-A definitive NOT FOUND after the normal Spotify-ID and ISRC resolution path marks exactly the current recording group's enrichment target IDs. It does not mark transient failures, malformed responses, quota/rate-limit stops, or audience-unavailable resolutions. A successful explicit retry clears the marker whether it obtains a stream count or only resolves a UUID. To record a known historical miss locally without contacting Soundcharts, use a stable member Spotify ID:
+If Soundcharts later verifies, for example:
 
-```powershell
-npm run streams:mark-soundcharts-not-found -- --spotify-track-id=0nLzyPto8nnKdf45IZP9eU
+```text
+streamCount = 560000000
+difficulty = normal
 ```
 
-Fresh song resolution also retains optional Soundcharts `releaseDate` and normalized root/subgenre metadata from that same resolver response, so capturing it costs no additional request. Metadata is propagated to every local Spotify version in the recording group. A group using an already-cached UUID does not perform another resolution merely to fill missing metadata, so older enriched rows may legitimately remain null.
+then on subsequent round selection it automatically:
 
-Raw `TrackCategory` rows preserve Spotify discovery associations. Each row has separate gameplay trust fields; normal category rounds and planner coverage reporting require the relation to be gameplay-enabled. Fresh Soundcharts genre metadata validates only existing active genre relations through a small explicit alias table. Supported relations are enabled, unsupported relations are disabled only when at least one active Soundcharts genre maps successfully, and unmapped evidence leaves trust unchanged. Validation never creates or deletes genre rows and never validates decades. Apply the same rules to stored metadata locally with:
-
-```powershell
-npm run catalog:backfill-game-categories
+```text
+leaves Unranked
+→ becomes available in Normal
 ```
 
-The command is deterministic, idempotent, SQLite-only, and makes no external requests. Spotify catalog rediscovery keeps `update: {}` for existing relations, so it cannot silently re-enable a validated rejection.
+There is no separate migration command.
 
-Audit the stored evidence without network access or database writes:
+## Previously resolved or NOT FOUND groups
 
-```powershell
-npm run catalog:audit-soundcharts-metadata
+Normal enrichment excludes two special states by default:
+
+- resolved Soundcharts UUID but no usable audience value
+- definitive Soundcharts resolver NOT FOUND
+
+They can be deliberately retried with:
+
+```text
+--include-cached-unranked
+--include-not-found
 ```
 
-The SQLite-only report compares Spotify and Soundcharts release years/decades, lists the actual stored root genres and subgenres, and distinguishes raw local genres, gameplay-enabled genres, and explicitly mapped Soundcharts genres. It does not mutate category relations.
+Do not add these flags to normal batches unless you intentionally want to retry those groups.
 
-## Import verified lifetime stream counts
+The normal neutral Soundcharts ordering is based on:
 
-Prepare a CSV at `data\streams.csv` with this header:
+1. number of eligible local target tracks represented by the recording group
+2. availability of a normalized ISRC
+3. deterministic stable ordering
+
+Genre/decade/difficulty deficits are reporting diagnostics only and do not control candidate order.
+
+---
+
+# Alternative: import verified stream counts from CSV
+
+If you already have a verified stream-count dataset, prepare:
+
+```text
+data/streams.csv
+```
+
+with:
 
 ```csv
 spotify_track_id,isrc,stream_count
 ```
 
-Run:
+Windows PowerShell:
 
 ```powershell
 npm run import:streams -- .\data\streams.csv
 ```
 
-Rows are matched by Spotify track ID first and normalized ISRC second. The importer rejects malformed identifiers, negative or unsafe counts, duplicate conflicts, and inconsistent values. It reports read, matched, updated, unchanged, missing, invalid, and conflict totals. It never invents missing counts.
+Linux/macOS:
 
-## Verification
+```bash
+npm run import:streams -- ./data/streams.csv
+```
 
-Run the unit and production checks:
+Tracks are matched by Spotify track ID first and normalized ISRC second.
+
+The importer never invents missing counts.
+
+---
+
+# Start the application
+
+Development mode:
+
+```bash
+npm run dev
+```
+
+Open exactly:
+
+```text
+http://127.0.0.1:3000
+```
+
+Do not use `localhost` for the Spotify OAuth callback unless you intentionally change both the Spotify Developer Dashboard and application configuration. The recommended local configuration uses `127.0.0.1`.
+
+On first use, connect the Spotify Premium account through the UI.
+
+---
+
+# Recommended fresh-install sequence
+
+If you cloned the repository **right now**, this is the complete setup order.
+
+## Windows PowerShell
 
 ```powershell
+git clone https://github.com/ekrzychu/spotify-songless.git
+Set-Location spotify-songless
+npm ci
+Copy-Item .env.example .env.local
+notepad .env.local
+```
+
+Then:
+
+1. configure Spotify Developer Dashboard
+2. fill in `.env.local`
+3. optionally add Soundcharts credentials
+4. run:
+
+```powershell
+npm run db:push
+npm run catalog:status
+npm run catalog:populate -- --plan
+npm run catalog:populate -- --target=5000 --max-requests=500
+npm run catalog:status
+npm run dev
+```
+
+At this point the newly populated songs can be played in **Unranked** mode.
+
+To start building ranked pools afterward:
+
+```powershell
+npm run streams:plan:soundcharts -- --limit=25
+npm run streams:enrich:soundcharts -- --canary
+npm run streams:enrich:soundcharts -- --limit=25 --max-api-requests=75
+npm run catalog:status
+```
+
+## Linux/macOS
+
+```bash
+git clone https://github.com/ekrzychu/spotify-songless.git
+cd spotify-songless
+npm ci
+cp .env.example .env.local
+```
+
+Edit `.env.local`, configure Spotify, then run:
+
+```bash
+npm run db:push
+npm run catalog:status
+npm run catalog:populate -- --plan
+npm run catalog:populate -- --target=5000 --max-requests=500
+npm run catalog:status
+npm run dev
+```
+
+At this point the newly populated songs can be played in **Unranked** mode.
+
+Optional ranked enrichment:
+
+```bash
+npm run streams:plan:soundcharts -- --limit=25
+npm run streams:enrich:soundcharts -- --canary
+npm run streams:enrich:soundcharts -- --limit=25 --max-api-requests=75
+npm run catalog:status
+```
+
+---
+
+# Updating an existing installation
+
+If you already have a local spodle installation with a populated `dev.db`, do **not** delete the database or population checkpoint just to update the code.
+
+Typical update:
+
+```bash
+git pull
+npm ci
+npm run db:push
+npm run catalog:status
+```
+
+Because `dev.db`, `.env.local` and `.runtime/` are ignored by Git, normal pulls do not overwrite them.
+
+If a particular release requires a local backfill, run the specific documented backfill for that change. Do not blindly reset the catalog or checkpoint.
+
+---
+
+# Useful catalog commands
+
+## Status
+
+```bash
+npm run catalog:status
+```
+
+Shows, among other things:
+
+- total catalog tracks
+- Spotify-playable tracks
+- game-eligible/ineligible tracks
+- raw ranked tracks
+- gameplay-ranked tracks
+- raw Unranked tracks
+- gameplay-eligible Unranked tracks
+- difficulty coverage
+- genre/decade coverage
+- language-policy counts
+
+## Genre audit
+
+```bash
+npm run catalog:audit-genres
+```
+
+SQLite-only. No external API request and no writes.
+
+## Language audit
+
+```bash
+npm run catalog:audit-languages
+```
+
+SQLite-only. No external API request and no writes.
+
+## Soundcharts metadata audit
+
+```bash
+npm run catalog:audit-soundcharts-metadata
+```
+
+SQLite-only. Compares stored Spotify/Soundcharts metadata without changing category relations.
+
+---
+
+# Backfill commands for older databases
+
+These are primarily maintenance tools for an existing database created by older code.
+
+```bash
+npm run catalog:backfill-decades
+npm run catalog:backfill-game-eligibility
+npm run catalog:backfill-languages
+npm run catalog:backfill-game-categories
+```
+
+They are local database operations and do not need to be part of the normal fresh-install path.
+
+---
+
+# Development and verification
+
+Run the standard checks:
+
+```bash
 npm run lint
 npm run typecheck
 npm test
 npm run build
 ```
 
-Install Playwright's browser once, then run the mocked browser suite:
+For browser tests, install Playwright Chromium once:
 
-```powershell
+```bash
 npx playwright install chromium
+```
+
+Then:
+
+```bash
 npm run test:browser
 ```
 
-The browser tests do not automate a real Spotify login. They mock the Spotify-facing application layer and verify hydration, connection states, custom filter accessibility, attempts, result focus, Next Song, and mobile overflow.
+The browser tests mock Spotify-facing application behavior and do not automate a real Spotify login.
 
-## Local data and security
+---
 
-- `.env`, `.env.local`, and `.env.*.local` are ignored by git.
-- `dev.db` is ignored by git.
-- Spotify tokens are never logged.
-- Authentication cookies keep their existing `nd_*` names so current local sessions are not broken by the spodle branding change.
-- Existing `needle-drop:filters`, `needle-drop:round`, and `needle-drop:stats` values are copied to their new `spodle:*` names only when the new key is absent. Legacy keys are left untouched.
+# Main npm commands
 
-## Platform constraints
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | start Next.js development server |
+| `npm run build` | production build |
+| `npm run start` | start built production app |
+| `npm run db:push` | sync SQLite schema and generate Prisma client |
+| `npm run catalog:status` | inspect catalog/ranked/unranked counts |
+| `npm run catalog:populate -- --plan` | preview population locally |
+| `npm run catalog:populate -- ...` | discover/populate Spotify tracks |
+| `npm run streams:plan:soundcharts -- --limit=25` | preview Soundcharts candidates offline |
+| `npm run streams:enrich:soundcharts -- --canary` | one-group Soundcharts test |
+| `npm run streams:enrich:soundcharts -- --limit=25 --max-api-requests=75` | rank a controlled batch |
+| `npm run import:streams -- <csv>` | import verified stream counts |
+| `npm run catalog:audit-genres` | read-only genre audit |
+| `npm run catalog:audit-languages` | read-only language audit |
+| `npm run catalog:audit-soundcharts-metadata` | read-only metadata audit |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript check |
+| `npm test` | Vitest unit tests |
+| `npm run test:browser` | Playwright browser tests |
 
-- Spotify Premium is required for Web Playback SDK playback.
-- Spotify does not expose lifetime stream counts through the Web API. A verified external dataset is still required before gameplay has eligible tracks.
-- Spotify URIs necessarily reach the browser for playback and can be inspected by a determined user. Server-owned round and answer validation provide reasonable game integrity, not DRM.
-- Review Spotify's current [Web Playback SDK documentation](https://developer.spotify.com/documentation/web-playback-sdk) and platform policies before deployment.
+---
+
+# Local data and security
+
+The following are intentionally ignored by Git:
+
+```text
+.env
+.env.local
+.env.*.local
+dev.db
+.runtime/
+node_modules/
+.next/
+```
+
+Important rules:
+
+- never commit Spotify credentials
+- never commit Soundcharts credentials
+- never commit `.env.local`
+- never log access/refresh tokens
+- Spotify audio is streamed by Spotify; spodle does not store audio files
+- the browser necessarily receives the Spotify URI required for playback
+
+Authentication uses Spotify Authorization Code with PKCE. Sensitive refresh/client credentials remain server-side.
+
+---
+
+# Gameplay notes
+
+## Ranked vs Unranked
+
+Ranked play requires both:
+
+```text
+streamCount != null
+difficulty != null
+```
+
+Unranked means at least one of those values is still null.
+
+Both ranked and Unranked selection also require the normal gameplay eligibility checks.
+
+## Categories
+
+Current game categories include:
+
+- All Music
+- Pop
+- Rock
+- Hip-Hop / Rap
+- R&B / Soul
+- Electronic / Dance
+- Classical
+- 70s
+- 80s
+- 90s
+- 2000s
+- 2010s
+- 2020s
+
+For non-All categories, only gameplay-enabled category relations are used.
+
+## Set progress
+
+Progress is scoped to the current session + category + difficulty.
+
+Finished songs are not repeated in that set until progress is reset. When every currently available song in a set has been completed, the UI reports that the set is complete and offers a progress reset.
+
+---
+
+# Spotify and Soundcharts quota behavior
+
+Spotify catalog population and Soundcharts enrichment are separate systems.
+
+## Spotify
+
+Catalog population uses Spotify Search and therefore consumes Spotify Web API capacity.
+
+If Spotify returns a quota-exhausted response, the population run stops cleanly and preserves the last completed-page checkpoint. Rerun the same population command later.
+
+## Soundcharts
+
+Soundcharts enrichment has its own customer-request budget and quota telemetry.
+
+HTTP request count is **not** assumed to be equal to Soundcharts charged quota consumption. The application treats the `x-quota-remaining` response header, when supplied, as the observed quota signal.
+
+`SOUNDCHARTS_QUOTA_RESERVE` provides a safety reserve after a valid quota header has been observed.
+
+---
+
+# Deployment note
+
+The current repository is primarily designed and tested as a local application.
+
+Before public deployment, review the current Spotify Web Playback SDK documentation, Spotify Developer Mode/Extended Quota requirements, Spotify platform policies, session/cookie deployment settings, database persistence strategy and production HTTPS/OAuth callback configuration.
