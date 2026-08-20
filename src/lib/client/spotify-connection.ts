@@ -44,3 +44,14 @@ export function oauthNotice(auth: string | null, connected: boolean): { text: st
   if (auth === "failed" || auth === "stale") return { text: "Spotify connection failed. Try again.", success: false };
   return null;
 }
+
+export async function disconnectSpotify(
+  resetPlayback: () => Promise<boolean>,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  if (!await resetPlayback()) {
+    throw new Error("Spotify playback could not be stopped. Press Pause and try again.");
+  }
+  const response = await fetcher("/api/auth/logout", { method: "POST" });
+  if (!response.ok) throw new Error("Spotify could not be disconnected. Try again.");
+}

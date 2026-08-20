@@ -36,6 +36,24 @@ export function oauthAttemptCookieName(state: string): string | null {
   return /^[A-Za-z0-9_-]{20,128}$/.test(state) ? `${OAUTH_COOKIE_PREFIX}${state}` : null;
 }
 
+export function spotifyAuthorizationParameters(input: {
+  clientId: string;
+  redirectUri: string;
+  state: string;
+  challenge: string;
+}): URLSearchParams {
+  return new URLSearchParams({
+    client_id: input.clientId,
+    response_type: "code",
+    redirect_uri: input.redirectUri,
+    scope: SPOTIFY_SCOPES,
+    state: input.state,
+    code_challenge_method: "S256",
+    code_challenge: input.challenge,
+    show_dialog: "true",
+  });
+}
+
 function required(name: "SPOTIFY_CLIENT_ID" | "SPOTIFY_REDIRECT_URI"): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is not configured`);
@@ -53,10 +71,11 @@ export async function createAuthorizationUrl(): Promise<string> {
   store.set(cookieName, seal({ state, verifier, expiresAt: Date.now() + 10 * 60_000 } satisfies OAuthAttempt), {
     ...baseCookie, maxAge: 600,
   });
-  const query = new URLSearchParams({
-    client_id: required("SPOTIFY_CLIENT_ID"), response_type: "code",
-    redirect_uri: required("SPOTIFY_REDIRECT_URI"), scope: SPOTIFY_SCOPES,
-    state, code_challenge_method: "S256", code_challenge: challenge,
+  const query = spotifyAuthorizationParameters({
+    clientId: required("SPOTIFY_CLIENT_ID"),
+    redirectUri: required("SPOTIFY_REDIRECT_URI"),
+    state,
+    challenge,
   });
   return `https://accounts.spotify.com/authorize?${query}`;
 }
@@ -125,7 +144,12 @@ export async function getSpotifySession(): Promise<SpotifyTokenSession | null> {
 }
 
 export async function clearSpotifySession(): Promise<void> {
-  (await cookies()).delete("nd_spotify");
+  const store = await cookies();
+  store.delete("nd_spotify");
+  store.delete("nd_oauth");
+  for (const cookie of store.getAll()) {
+    if (cookie.name.startsWith(OAUTH_COOKIE_PREFIX)) store.delete(cookie.name);
+  }
 }
 
 function validOAuthAttempt(value: OAuthAttempt | null, state: string): OAuthAttempt | null {

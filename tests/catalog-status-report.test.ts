@@ -22,6 +22,8 @@ describe("catalog status report", () => {
       gameEligibleTracks: 88,
       gameIneligibleTracks: 12,
       rankedTracks: 40,
+      provisionalRankedTracks: 15,
+      verifiedRankedTracks: 25,
       gameplayRankedTracks: 35,
       unrankedTracks: 60,
       gameplayUnrankedTracks: 52,
@@ -45,6 +47,8 @@ describe("catalog status report", () => {
     expect(report).toContain("Game-eligible tracks: 88");
     expect(report).toContain("Game-ineligible tracks: 12");
     expect(report).toContain("Ranked tracks (raw): 40");
+    expect(report).toContain("Provisional ranked tracks (spotify_full): 15");
+    expect(report).toContain("Verified ranked tracks: 25");
     expect(report).toContain("RANKING STATUS");
     expect(report).toContain("Game-eligible ranked tracks (playable): 35");
     expect(report).toContain("Unranked tracks (raw): 60");

@@ -75,7 +75,7 @@ async function mockSpotifySdk(page: Page): Promise<void> {
         }
         addListener(name, callback) { this.listeners[name] = callback; return true; }
         connect() { setTimeout(() => this.listeners.ready?.({ device_id: 'browser-test' }), 0); return Promise.resolve(true); }
-        disconnect() {}
+        disconnect() { window.__spodleSdkTest.events.push('disconnect'); }
         activateElement() { window.__spodleSdkTest.events.push('activate'); return Promise.resolve(); }
         pause() {
           this.pauseCalls += 1;
@@ -178,6 +178,27 @@ test("the real session overrides a stale auth callback and the query is cleaned"
   await expect(page.getByText("Spotify is already connected.")).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.has("auth")).toBe(false);
   await expect(page.getByText("Attempt 1")).toBeVisible();
+});
+
+test("explicit Spotify logout stops playback, clears auth, disconnects the SDK, and preserves local game state", async ({ page }) => {
+  await mockConnectedGame(page);
+  let logoutRequests = 0;
+  await page.route("**/api/auth/logout", (route) => {
+    logoutRequests += 1;
+    return route.fulfill({ json: { ok: true } });
+  });
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
+  await page.evaluate(() => localStorage.setItem("spodle-test-progress", "preserve-me"));
+
+  await page.getByRole("button", { name: "Log out" }).click();
+
+  await expect(page.getByRole("heading", { name: "Connect Spotify to play" })).toBeVisible();
+  expect(logoutRequests).toBe(1);
+  await expect.poll(() => page.evaluate(() => (
+    window as unknown as { __spodleSdkTest: { events: string[] } }
+  ).__spodleSdkTest.events.includes("disconnect"))).toBe(true);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("spodle-test-progress"))).toBe("preserve-me");
 });
 
 test("category and exposed difficulty controls are dark and keyboard accessible", async ({ page }) => {

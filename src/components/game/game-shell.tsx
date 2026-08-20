@@ -14,7 +14,12 @@ import { VolumeControl } from "@/components/game/volume-control";
 import { DEFAULT_FILTERS, normalizeStoredFilters, type GameFilters } from "@/lib/client/filters";
 import { EMPTY_STATS, readStats, recordResult, type LocalStats } from "@/lib/client/stats";
 import { migrateStorageKey, STORAGE_KEYS } from "@/lib/client/storage";
-import { checkSpotifyConnection, oauthNotice, type SpotifyConnectionState } from "@/lib/client/spotify-connection";
+import {
+  checkSpotifyConnection,
+  disconnectSpotify,
+  oauthNotice,
+  type SpotifyConnectionState,
+} from "@/lib/client/spotify-connection";
 import { PlaybackRequestError, artworkUrlForUri, useSpotifyPlayer } from "@/hooks/use-spotify-player";
 import { getCategory } from "@/lib/catalog/category-config";
 import { GAME_DIFFICULTY_LABELS, nextHigherDifficulty } from "@/lib/game/difficulty";
@@ -37,6 +42,7 @@ export function GameShell() {
   const [authNotice, setAuthNotice] = useState<{ text: string; success: boolean } | null>(null);
   const [pendingFilters, setPendingFilters] = useState<Filters | null>(null);
   const [confirmingReset, setConfirmingReset] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [exhaustedPool, setExhaustedPool] = useState<Filters | null>(null);
   const [setProgress, setSetProgress] = useState<SetProgressView>({ completed: 0, total: 0 });
   const [stats, setStats] = useState<LocalStats>(EMPTY_STATS);
@@ -281,13 +287,31 @@ export function GameShell() {
   const currentCategory = getCategory(filters.category)?.label ?? filters.category;
   const currentDifficulty = GAME_DIFFICULTY_LABELS[filters.difficulty];
   const currentSnippetLength = round?.snippetLength ?? 0.1;
+  const logOut = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true); setNotice(null);
+    try {
+      await disconnectSpotify(player.resetPlayback);
+      setConnection("disconnected");
+      setAuthNotice({ text: "Spotify disconnected.", success: true });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Spotify could not be disconnected.");
+    } finally {
+      setLoggingOut(false);
+    }
+  };
 
   return (
     <div className="app-theme" data-difficulty={filters.difficulty}>
     <main className="game-shell" inert={modalOpen || undefined}>
       <header className="site-header">
         <div><span className="wordmark-mark" aria-hidden="true" /><h1>spodle</h1></div>
-        {connected && <button className="connection" type="button" onClick={() => void fetch("/api/auth/logout", { method: "POST" }).then(() => location.reload())}><span />Spotify</button>}
+        {connected && <div className="spotify-account">
+          <span className="connection"><span />Spotify connected</span>
+          <button className="logout-button" type="button" disabled={loggingOut} onClick={() => void logOut()}>
+            {loggingOut ? "Logging out…" : "Log out"}
+          </button>
+        </div>}
       </header>
 
       <section className={`game${connected ? " game--connected" : ""}`} aria-busy={loadingRound || player.busy}>

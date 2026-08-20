@@ -17,6 +17,8 @@ export type CatalogStatusData = {
   gameEligibleTracks: number;
   gameIneligibleTracks: number;
   rankedTracks: number;
+  provisionalRankedTracks: number;
+  verifiedRankedTracks: number;
   gameplayRankedTracks: number;
   unrankedTracks: number;
   gameplayUnrankedTracks: number;
@@ -61,6 +63,8 @@ export function formatCatalogStatus(data: CatalogStatusData): string {
     "",
     "RANKING STATUS",
     `Ranked tracks (raw): ${data.rankedTracks}`,
+    `Provisional ranked tracks (spotify_full): ${data.provisionalRankedTracks}`,
+    `Verified ranked tracks: ${data.verifiedRankedTracks}`,
     `Game-eligible ranked tracks (playable): ${data.gameplayRankedTracks}`,
     `Unranked tracks (raw): ${data.unrankedTracks}`,
     `Game-eligible Unranked tracks (playable): ${data.gameplayUnrankedTracks}`,

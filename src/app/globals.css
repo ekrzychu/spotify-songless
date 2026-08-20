@@ -113,11 +113,8 @@ a { color: inherit; }
   color: var(--text-muted);
   font-size: 12px;
   letter-spacing: .04em;
-  cursor: pointer;
   padding: 1px 0 5px 8px;
-  transition: color var(--ease);
 }
-.connection:hover { color: var(--text); }
 .connection span {
   display: inline-block;
   width: 6px;
@@ -126,6 +123,20 @@ a { color: inherit; }
   border-radius: 50%;
   background: var(--accent);
 }
+.spotify-account { display: flex; align-items: center; gap: 12px; }
+.logout-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 1px 0 5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.logout-button:hover { color: var(--text); }
+.logout-button:disabled { cursor: wait; opacity: .65; }
 
 .game {
   width: 100%;

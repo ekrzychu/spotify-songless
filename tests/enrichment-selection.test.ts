@@ -80,14 +80,21 @@ describe("Soundcharts recording groups", () => {
     const candidates = [
       track("missing", "pop"),
       ranked("soundcharts", ["rock"], "hard"),
+      track("provisional", "pop", { streamCount: 100n, streamCountSource: "spotify_full", difficulty: "hard" }),
       track("csv", "jazz", { streamCount: 100n, streamCountSource: "csv", difficulty: "hard" }),
+      track("future", "pop", { streamCount: 100n, streamCountSource: "future_verified", difficulty: "hard" }),
     ];
 
-    expect(groupEnrichmentCandidates(candidates).map((group) => group.representative.id)).toEqual(["missing"]);
+    expect(groupEnrichmentCandidates(candidates).map((group) => group.representative.id).sort()).toEqual([
+      "missing", "provisional",
+    ]);
     expect(groupEnrichmentCandidates(candidates, true).map((group) => group.representative.id).sort()).toEqual([
       "missing",
+      "provisional",
       "soundcharts",
     ]);
+    const plan = buildSoundchartsEnrichmentPlan(candidates, options);
+    expect(plan).toMatchObject({ unrankedTargetTracks: 1, provisionalSpotifyFullTargets: 1 });
   });
 
   it("excludes game-ineligible and unplayable targets from normal enrichment", () => {

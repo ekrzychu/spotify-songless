@@ -8,6 +8,7 @@ import {
   normalizeStreamRows,
   type RawStreamRow,
 } from "../src/lib/streams/import-normalizer";
+import { STREAM_SOURCES, canVerifiedCsvReplace } from "../src/lib/streams/stream-sources";
 
 async function main(): Promise<void> {
   const input = process.argv[2];
@@ -18,7 +19,7 @@ async function main(): Promise<void> {
   const normalized = normalizeStreamRows(rawRows);
   const summary = {
     read: rawRows.length, matched: 0, updated: 0, unchanged: 0,
-    missing: 0, invalid: normalized.invalid, conflicts: normalized.conflicts,
+    missing: 0, protected: 0, invalid: normalized.invalid, conflicts: normalized.conflicts,
   };
 
   for (const row of normalized.rows) {
@@ -33,18 +34,22 @@ async function main(): Promise<void> {
       continue;
     }
     summary.matched += 1;
+    if (!canVerifiedCsvReplace(fallback.streamCountSource)) {
+      summary.protected += 1;
+      continue;
+    }
     const difficulty = difficultyFromStreams(row.streamCount);
     if (
       fallback.streamCount !== BigInt(row.streamCount)
       || fallback.difficulty !== difficulty
-      || fallback.streamCountSource !== "csv"
+      || fallback.streamCountSource !== STREAM_SOURCES.verifiedCsv
     ) {
       await db.gameTrack.update({
         where: { id: fallback.id },
         data: {
           streamCount: BigInt(row.streamCount),
           difficulty,
-          streamCountSource: "csv",
+          streamCountSource: STREAM_SOURCES.verifiedCsv,
           streamCountUpdatedAt: new Date(),
         },
       });
@@ -55,7 +60,8 @@ async function main(): Promise<void> {
   console.log([
     `Rows read: ${summary.read}`, `Matched:   ${summary.matched}`,
     `Updated:   ${summary.updated}`, `Unchanged: ${summary.unchanged}`,
-    `Missing:   ${summary.missing}`, `Invalid:   ${summary.invalid}`, `Conflicts: ${summary.conflicts}`,
+    `Missing:   ${summary.missing}`, `Protected: ${summary.protected}`,
+    `Invalid:   ${summary.invalid}`, `Conflicts: ${summary.conflicts}`,
   ].join("\n"));
   if (summary.invalid > 0 || summary.conflicts > 0) process.exitCode = 2;
 }

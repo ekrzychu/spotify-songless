@@ -6,6 +6,7 @@ import {
 } from "@/lib/catalog/track-quality";
 import { RANKED_DIFFICULTY_LABELS } from "@/lib/game/difficulty";
 import { normalizeIsrc } from "@/lib/streams/import-normalizer";
+import { STREAM_SOURCES, canSoundchartsReplace } from "@/lib/streams/stream-sources";
 import { RANKED_DIFFICULTIES, type RankedDifficulty } from "@/types/game";
 
 export const DEFAULT_ENRICHMENT_LIMIT = 100;
@@ -99,11 +100,17 @@ export type SoundchartsEnrichmentPlan = {
   gameIneligibleRankedTracks: number;
   unplayableRankedTracks: number;
   unrankedTracks: number;
+  unrankedTargetTracks: number;
+  provisionalSpotifyFullTracks: number;
+  provisionalSpotifyFullTargets: number;
+  verifiedSoundchartsTracks: number;
+  verifiedCsvTracks: number;
   targetPerCell: number;
   includeNotFound: boolean;
   coverage: RankedCoverageMatrix;
   underfilledCells: UnderfilledCell[];
   freshUnrankedGroups: number;
+  provisionalSpotifyFullGroups: number;
   cachedUnrankedGroups: number;
   previouslyNotFoundGroups: number;
   conflictingCachedUuidGroups: number;
@@ -151,7 +158,7 @@ function recordingKey(track: EnrichmentTrackCandidate): { key: string; normalize
 function isTarget(track: EnrichmentTrackCandidate, refresh: boolean): boolean {
   if (!track.playable || !track.gameEligible || !isNormalLanguageEligible(track)) return false;
   if (track.streamCount === null) return true;
-  return refresh && track.streamCountSource === "soundcharts";
+  return canSoundchartsReplace(track.streamCountSource, refresh);
 }
 
 function isRawRanked(track: EnrichmentTrackCandidate): boolean {
@@ -240,7 +247,11 @@ export function buildSoundchartsEnrichmentPlan(
   const targetById = new Map(tracks.map((track) => [track.id, track]));
   const isCachedUnranked = (group: EnrichmentRecordingGroup): boolean => (
     group.cachedSoundchartsUuid !== null
-    && group.targetTrackIds.every((id) => targetById.get(id)?.streamCount === null)
+    && group.targetTrackIds.every((id) => {
+      const target = targetById.get(id);
+      return target?.streamCount === null
+        || target?.streamCountSource === STREAM_SOURCES.provisionalSpotifyFull;
+    })
   );
   const isPreviouslyNotFound = (group: EnrichmentRecordingGroup): boolean => (
     group.targetTrackIds.every((id) => targetById.get(id)?.soundchartsNotFoundAt != null)
@@ -258,6 +269,9 @@ export function buildSoundchartsEnrichmentPlan(
     && !isPreviouslyNotFound(group)
     && group.targetTrackIds.every((id) => targetById.get(id)?.streamCount === null)
   )).length;
+  const provisionalSpotifyFullGroups = groups.filter((group) => group.targetTrackIds.some((id) => (
+    targetById.get(id)?.streamCountSource === STREAM_SOURCES.provisionalSpotifyFull
+  ))).length;
   const qualityByGroup = new Map(groups.map((group) => [
     group.key,
     classifyRecordingGroupQuality(group),
@@ -307,6 +321,7 @@ export function buildSoundchartsEnrichmentPlan(
   }), { minimum: 0, likely: 0, upper: 0 });
   const rawRankedTracks = tracks.filter(isRawRanked).length;
   const gameplayRankedTracks = tracks.filter(isGameplayRanked).length;
+  const targetTracks = groups.flatMap((group) => group.targetTrackIds.map((id) => targetById.get(id)!));
 
   return {
     catalogTracks: tracks.length,
@@ -315,11 +330,25 @@ export function buildSoundchartsEnrichmentPlan(
     gameIneligibleRankedTracks: tracks.filter((track) => isRawRanked(track) && !track.gameEligible).length,
     unplayableRankedTracks: tracks.filter((track) => isRawRanked(track) && !track.playable).length,
     unrankedTracks: tracks.length - rawRankedTracks,
+    unrankedTargetTracks: targetTracks.filter((track) => track.streamCount === null).length,
+    provisionalSpotifyFullTracks: tracks.filter((track) => (
+      isRawRanked(track) && track.streamCountSource === STREAM_SOURCES.provisionalSpotifyFull
+    )).length,
+    provisionalSpotifyFullTargets: targetTracks.filter((track) => (
+      track.streamCountSource === STREAM_SOURCES.provisionalSpotifyFull
+    )).length,
+    verifiedSoundchartsTracks: tracks.filter((track) => (
+      isRawRanked(track) && track.streamCountSource === STREAM_SOURCES.verifiedSoundcharts
+    )).length,
+    verifiedCsvTracks: tracks.filter((track) => (
+      isRawRanked(track) && track.streamCountSource === STREAM_SOURCES.verifiedCsv
+    )).length,
     targetPerCell: options.targetPerCell,
     includeNotFound: options.includeNotFound,
     coverage,
     underfilledCells,
     freshUnrankedGroups,
+    provisionalSpotifyFullGroups,
     cachedUnrankedGroups,
     previouslyNotFoundGroups,
     conflictingCachedUuidGroups,
@@ -356,12 +385,18 @@ export function formatSoundchartsEnrichmentPlan(
     `Game-ineligible ranked tracks: ${plan.gameIneligibleRankedTracks.toLocaleString("en-US")}`,
     `Unplayable ranked tracks: ${plan.unplayableRankedTracks.toLocaleString("en-US")}`,
     `Unranked tracks: ${plan.unrankedTracks.toLocaleString("en-US")}`,
+    `Unranked targets: ${plan.unrankedTargetTracks.toLocaleString("en-US")}`,
+    `Provisional ranked tracks (spotify_full): ${plan.provisionalSpotifyFullTracks.toLocaleString("en-US")}`,
+    `Provisional spotify_full targets: ${plan.provisionalSpotifyFullTargets.toLocaleString("en-US")}`,
+    `Verified ranked tracks (Soundcharts): ${plan.verifiedSoundchartsTracks.toLocaleString("en-US")}`,
+    `Verified ranked tracks (CSV): ${plan.verifiedCsvTracks.toLocaleString("en-US")}`,
     "",
     `Target ranked per category/difficulty cell: ${plan.targetPerCell}`,
     "Candidate difficulty is unknown until Soundcharts returns verified stream counts.",
     "",
     `Fresh unranked recording groups: ${plan.freshUnrankedGroups}`,
-    `Previously resolved but still unranked: ${plan.cachedUnrankedGroups}`,
+    `Provisional spotify_full recording groups: ${plan.provisionalSpotifyFullGroups}`,
+    `Previously resolved targets without audience data: ${plan.cachedUnrankedGroups}`,
     `Previously not found: ${plan.previouslyNotFoundGroups}`,
     `Include previously not found: ${plan.includeNotFound ? "yes" : "no"}`,
     `Groups with conflicting cached UUIDs: ${plan.conflictingCachedUuidGroups}`,

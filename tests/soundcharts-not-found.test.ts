@@ -17,6 +17,22 @@ describe("Soundcharts not-found persistence", () => {
     expect(markTargets).toHaveBeenCalledWith(["track-a", "track-b"], now);
   });
 
+  it("preserves provisional ranking fields by recording only target IDs and the timestamp", async () => {
+    const now = new Date("2026-08-20T12:00:00Z");
+    const provisional = {
+      streamCount: 3_000_000n, difficulty: "impossible", streamCountSource: "spotify_full",
+    };
+    const markTargets = vi.fn().mockResolvedValue(1);
+    await markSoundchartsNotFoundTargets(
+      { targetTrackIds: ["provisional-track"] },
+      { now, dependencies: { markTargets } },
+    );
+    expect(markTargets).toHaveBeenCalledWith(["provisional-track"], now);
+    expect(provisional).toEqual({
+      streamCount: 3_000_000n, difficulty: "impossible", streamCountSource: "spotify_full",
+    });
+  });
+
   it("records only the provider's definitive not_found failure", async () => {
     const now = new Date("2026-08-18T12:00:00Z");
     const markTargets = vi.fn().mockResolvedValue(1);

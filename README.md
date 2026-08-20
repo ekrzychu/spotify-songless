@@ -289,9 +289,27 @@ Eligible tracks are immediately available in the **Unranked** difficulty.
 
 Normal gameplay eligibility requires Spotify playability, track-level game eligibility, and language eligibility. The current language policy accepts unknown or uncertain classifications and tracks classified as English, Polish, or Spanish; tracks confidently classified as another language are excluded.
 
+## Provisional ranking from spotify_full.csv
+
+Large `spotify_full.csv` datasets can provisionally rank matching local catalog tracks without any network requests. Put the real file directly in `data/` (CSV files there are gitignored and the dataset must not be committed), then run:
+
+```powershell
+npm run streams:import -- "spotify_full.csv"
+```
+
+Only a filename is accepted; absolute paths, traversal, and nested paths are rejected. The importer streams the CSV, matches exact Spotify IDs, rounds finite non-negative decimal estimates, and keeps the highest valid duplicate value. It writes `streamCountSource = spotify_full` only over missing or existing provisional values. It never replaces Soundcharts, verified CSV, or future verified sources.
+
+`spotify_full` is deliberately provisional. These tracks are available in ranked gameplay immediately, while remaining normal Soundcharts enrichment targets. A successful Soundcharts lookup replaces the provisional count and difficulty; audience-unavailable and `NOT FOUND` outcomes preserve them.
+
+Source precedence is:
+
+```text
+Soundcharts / verified CSV / future verified source > spotify_full > null
+```
+
 ## Soundcharts enrichment
 
-Soundcharts enrichment assigns verified lifetime stream counts and ranked difficulties to eligible Unranked tracks.
+Soundcharts enrichment assigns verified lifetime stream counts and ranked difficulties to eligible Unranked or provisional `spotify_full` tracks.
 
 ### Preview candidates
 
@@ -358,6 +376,8 @@ npm run import:streams -- ./data/streams.csv
 
 Tracks are matched by Spotify track ID first and normalized ISRC second.
 
+The verified CSV importer can replace missing, provisional `spotify_full`, or prior CSV values. It does not replace Soundcharts or unknown future verified sources.
+
 ## Running the application
 
 Start the development server:
@@ -373,6 +393,8 @@ http://127.0.0.1:3000
 ```
 
 The local Spotify callback is configured for `127.0.0.1`; use the same host when running the development application.
+
+Spodle connects one Spotify account at a time. Use the **Log out** control beside **Spotify connected** to stop playback, remove that server-side Spotify session, and return to the connect state without clearing game progress, filters, or stats. Then use **Connect Spotify** to authorize another account; the account must satisfy the Spotify Developer application's current access/allowlist requirements. The connection flow opens Spotify's account/consent chooser, making account switching explicit.
 
 ## Fresh installation workflow
 
@@ -474,6 +496,7 @@ npm run test:browser
 | `npm run streams:plan:soundcharts -- --limit=25` | Preview Soundcharts enrichment candidates |
 | `npm run streams:enrich:soundcharts -- --canary` | Run one Soundcharts enrichment canary |
 | `npm run streams:enrich:soundcharts -- --limit=25 --max-api-requests=75` | Enrich a controlled batch |
+| `npm run streams:import -- "spotify_full.csv"` | Import provisional stream counts from `data/spotify_full.csv` |
 | `npm run import:streams -- <csv>` | Import verified lifetime stream counts |
 | `npm run catalog:audit-genres` | Run the local genre audit |
 | `npm run catalog:audit-languages` | Run the local language audit |

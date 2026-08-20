@@ -73,7 +73,10 @@ describe("Soundcharts database enrichment", () => {
       where: {
         id: { in: ["track-1", "track-2"] },
         languageEligible: true,
-        streamCount: null,
+        OR: [
+          { streamCount: null },
+          { streamCountSource: "spotify_full" },
+        ],
       },
       data: {
         soundchartsUuid: "soundcharts-uuid",
@@ -112,7 +115,10 @@ describe("Soundcharts database enrichment", () => {
       where: {
         id: { in: ["track-1"] },
         languageEligible: true,
-        streamCount: null,
+        OR: [
+          { streamCount: null },
+          { streamCountSource: "spotify_full" },
+        ],
       },
       data: {
         soundchartsUuid: "soundcharts-uuid",
@@ -142,9 +148,44 @@ describe("Soundcharts database enrichment", () => {
     expect(database.gameTrack.updateMany.mock.calls[0]?.[0].where).toEqual({
       id: { in: ["track-1"] },
       languageEligible: true,
-      OR: [{ streamCount: null }, { streamCountSource: "soundcharts" }],
+      OR: [
+        { streamCount: null },
+        { streamCountSource: "spotify_full" },
+        { streamCountSource: "soundcharts" },
+      ],
     });
     expect(database.trackCategory.findMany).not.toHaveBeenCalled();
+  });
+
+  it("replaces provisional spotify_full values after verified Soundcharts success", async () => {
+    const provider = {
+      getStreamCountResult: vi.fn().mockResolvedValue({
+        soundchartsUuid: "verified-uuid", streamCount: 50_000_000, audienceDate: "2026-08-20",
+        identifierCount: 1, uniqueValueCount: 1, resolutionSource: "spotify",
+        soundchartsReleaseDate: null, soundchartsGenres: null,
+      }),
+    };
+    await enrichRecordingGroup(group, provider);
+    expect(database.gameTrack.updateMany.mock.calls[0]?.[0]).toMatchObject({
+      where: { OR: expect.arrayContaining([{ streamCountSource: "spotify_full" }]) },
+      data: { streamCount: 50_000_000n, difficulty: "hard", streamCountSource: "soundcharts" },
+    });
+  });
+
+  it("preserves provisional stream fields when Soundcharts audience data is unavailable", async () => {
+    const provider = {
+      getStreamCountResult: vi.fn().mockResolvedValue({
+        soundchartsUuid: "cached-uuid", streamCount: null, audienceDate: null,
+        identifierCount: 0, uniqueValueCount: 0, resolutionSource: "spotify",
+        soundchartsReleaseDate: null, soundchartsGenres: null,
+      }),
+    };
+    await enrichRecordingGroup(group, provider);
+    const call = database.gameTrack.updateMany.mock.calls[0]?.[0];
+    expect(call.where.OR).toContainEqual({ streamCountSource: "spotify_full" });
+    expect(call.data).not.toHaveProperty("streamCount");
+    expect(call.data).not.toHaveProperty("difficulty");
+    expect(call.data).not.toHaveProperty("streamCountSource");
   });
 
   it("validates existing active genre relations after fresh metadata without adding or deleting rows", async () => {

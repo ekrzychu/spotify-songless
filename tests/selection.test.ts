@@ -20,9 +20,10 @@ type SelectionFixture = {
   languageEligible: boolean;
   streamCount: bigint | null;
   difficulty: string | null;
+  streamCountSource?: string | null;
 };
 
-function matchesSelection(track: SelectionFixture, difficulty: "hard" | "unranked"): boolean {
+function matchesSelection(track: SelectionFixture, difficulty: "hard" | "impossible" | "unranked"): boolean {
   if (!track.playable || !track.gameEligible || !track.languageEligible) return false;
   return difficulty === "unranked"
     ? track.streamCount === null || track.difficulty === null
@@ -127,6 +128,20 @@ describe("random track selection", () => {
 
     expect(matchesSelection(track, "unranked")).toBe(false);
     expect(matchesSelection(track, "hard")).toBe(true);
+  });
+
+  it("selects spotify_full tracks in their ranked difficulty and not Unranked", () => {
+    const provisional: SelectionFixture = {
+      playable: true,
+      gameEligible: true,
+      languageEligible: true,
+      streamCount: 3_000_000n,
+      difficulty: "impossible",
+      streamCountSource: "spotify_full",
+    };
+    expect(matchesSelection(provisional, "unranked")).toBe(false);
+    expect(matchesSelection(provisional, "impossible")).toBe(true);
+    expect(gameplaySelectionWhere("all", "impossible")).not.toHaveProperty("streamCountSource");
   });
 
   it("accepts a ranked unknown-language track without requiring languageCode", async () => {

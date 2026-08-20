@@ -7,6 +7,7 @@ import {
 import { difficultyFromStreams } from "@/lib/game/difficulty";
 import type { EnrichmentRecordingGroup } from "@/lib/streams/enrichment-selection";
 import type { SoundchartsStreamCountResult } from "@/lib/streams/soundcharts-provider";
+import { STREAM_SOURCES } from "@/lib/streams/stream-sources";
 import type { RankedDifficulty } from "@/types/game";
 
 export interface SoundchartsEnrichmentProvider {
@@ -91,8 +92,15 @@ export async function enrichRecordingGroup(
     soundchartsUuid: group.cachedSoundchartsUuid,
   });
   const eligibility: Prisma.GameTrackWhereInput = options.refresh
-    ? { OR: [{ streamCount: null }, { streamCountSource: "soundcharts" }] }
-    : { streamCount: null };
+    ? { OR: [
+      { streamCount: null },
+      { streamCountSource: STREAM_SOURCES.provisionalSpotifyFull },
+      { streamCountSource: STREAM_SOURCES.verifiedSoundcharts },
+    ] }
+    : { OR: [
+      { streamCount: null },
+      { streamCountSource: STREAM_SOURCES.provisionalSpotifyFull },
+    ] };
   const where: Prisma.GameTrackWhereInput = {
     id: { in: group.targetTrackIds },
     languageEligible: true,
@@ -126,7 +134,7 @@ export async function enrichRecordingGroup(
       ...soundchartsMetadataUpdate(providerResult),
       streamCount: BigInt(providerResult.streamCount),
       difficulty,
-      streamCountSource: "soundcharts",
+      streamCountSource: STREAM_SOURCES.verifiedSoundcharts,
       streamCountUpdatedAt: now,
     },
   });

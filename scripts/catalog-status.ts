@@ -8,6 +8,7 @@ import {
 import { RANKED_DIFFICULTIES, type RankedDifficulty } from "../src/types/game";
 import { isAcceptedGameLanguage } from "../src/lib/catalog/track-language";
 import { gameplaySelectionWhere } from "../src/lib/game/selection";
+import { STREAM_SOURCES, isVerifiedStreamSource } from "../src/lib/streams/stream-sources";
 
 async function main(): Promise<void> {
   const categories = activeCatalogStatusCategories();
@@ -57,6 +58,7 @@ async function main(): Promise<void> {
       gameEligible: true,
       streamCount: true,
       difficulty: true,
+      streamCountSource: true,
     } }),
     Promise.all(categories.map(async (category): Promise<CatalogPoolStatus> => {
       const relation = { some: { categoryId: category.id } };
@@ -89,6 +91,14 @@ async function main(): Promise<void> {
     counts[code] = (counts[code] ?? 0) + 1;
     return counts;
   }, {});
+  const provisionalRankedTracks = languageRows.filter((track) => (
+    track.streamCount !== null && track.difficulty !== null
+    && track.streamCountSource === STREAM_SOURCES.provisionalSpotifyFull
+  )).length;
+  const verifiedRankedTracks = languageRows.filter((track) => (
+    track.streamCount !== null && track.difficulty !== null
+    && isVerifiedStreamSource(track.streamCountSource)
+  )).length;
 
   console.log(formatCatalogStatus({
     totalTracks,
@@ -96,6 +106,8 @@ async function main(): Promise<void> {
     gameEligibleTracks,
     gameIneligibleTracks,
     rankedTracks,
+    provisionalRankedTracks,
+    verifiedRankedTracks,
     gameplayRankedTracks,
     unrankedTracks,
     gameplayUnrankedTracks,
