@@ -6,6 +6,7 @@ import { resolveDatasetFile } from "../src/lib/streams/data-file";
 import {
   SpotifyFullImportAccumulator,
   formatSpotifyFullImportReport,
+  updatesToApply,
   type SpotifyFullImportRow,
   type SpotifyFullImportTrack,
 } from "../src/lib/streams/spotify-full-import";
@@ -14,8 +15,10 @@ import { STREAM_SOURCES } from "../src/lib/streams/stream-sources";
 const UPDATE_BATCH_SIZE = 100;
 
 async function main(): Promise<void> {
-  const fileName = process.argv[2];
-  if (!fileName) throw new Error('Usage: npm run streams:import -- "spotify_full.csv"');
+  const argumentsAfterCommand = process.argv.slice(2);
+  const dryRun = argumentsAfterCommand.includes("--dry-run");
+  const fileName = argumentsAfterCommand.find((argument) => argument !== "--dry-run");
+  if (!fileName) throw new Error('Usage: npm run streams:import -- "spotify_full.csv" [--dry-run]');
   const input = await resolveDatasetFile(fileName);
   const rows = await db.gameTrack.findMany({
     select: {
@@ -40,8 +43,9 @@ async function main(): Promise<void> {
   const plan = accumulator.plan();
   const importedAt = new Date();
   let actuallyUpdated = 0;
-  for (let offset = 0; offset < plan.updates.length; offset += UPDATE_BATCH_SIZE) {
-    const batch = plan.updates.slice(offset, offset + UPDATE_BATCH_SIZE);
+  const updates = updatesToApply(plan, dryRun);
+  for (let offset = 0; offset < updates.length; offset += UPDATE_BATCH_SIZE) {
+    const batch = updates.slice(offset, offset + UPDATE_BATCH_SIZE);
     const results = await db.$transaction(batch.map((update) => db.gameTrack.updateMany({
       where: {
         id: update.id,
@@ -59,8 +63,8 @@ async function main(): Promise<void> {
     })));
     actuallyUpdated += results.reduce((total, result) => total + result.count, 0);
   }
-  plan.updated = actuallyUpdated;
-  console.log(formatSpotifyFullImportReport(plan, input.displayPath));
+  if (!dryRun) plan.updated = actuallyUpdated;
+  console.log(formatSpotifyFullImportReport(plan, input.displayPath, { dryRun }));
 }
 
 main()

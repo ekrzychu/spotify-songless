@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { resolveDatasetFile } from "@/lib/streams/data-file";
 import {
   SpotifyFullImportAccumulator,
+  formatSpotifyFullImportReport,
+  updatesToApply,
   type SpotifyFullImportTrack,
 } from "@/lib/streams/spotify-full-import";
 import {
@@ -39,7 +41,7 @@ describe("spotify_full provisional import", () => {
       streams_total_estimated: "True",
     }]);
     expect(result.updates).toEqual([expect.objectContaining({
-      spotifyTrackId: ID, streamCount: 250_000_000, difficulty: "normal",
+      spotifyTrackId: ID, streamCount: 250_000_000, difficulty: "easy",
     })]);
     expect(result.diagnostics).toMatchObject({ estimatedTrue: 1, arc2_2023Top: 1 });
   });
@@ -49,7 +51,7 @@ describe("spotify_full provisional import", () => {
       spotify_id: ID, streams_total: "50000000.2", streams_source: source,
       streams_total_estimated: "false",
     }]);
-    expect(result.updates[0]).toMatchObject({ streamCount: 50_000_000, difficulty: "hard" });
+    expect(result.updates[0]).toMatchObject({ streamCount: 50_000_000, difficulty: "easy" });
   });
 
   it("rejects malformed IDs and invalid stream counts", () => {
@@ -74,9 +76,31 @@ describe("spotify_full provisional import", () => {
     expect(plan(track({ streamCountSource: source }), [{ spotify_id: ID, streams_total: "10" }]).updated).toBe(1);
   });
 
+  it("reclassifies an unchanged raw spotify_full stream count on reimport", () => {
+    const result = plan(track({
+      streamCount: 3_000_000n,
+      streamCountSource: "spotify_full",
+      difficulty: "impossible",
+    }), [{ spotify_id: ID, streams_total: "3000000" }]);
+    expect(result.updates).toEqual([expect.objectContaining({
+      streamCount: 3_000_000,
+      difficulty: "normal",
+    })]);
+  });
+
   it.each(["soundcharts", "csv", "future_verified"])("protects verified source %s", (source) => {
     const result = plan(track({ streamCountSource: source }), [{ spotify_id: ID, streams_total: "10" }]);
     expect(result.updated).toBe(0);
+  });
+
+  it("reports provisional calibration and makes dry-run plans non-writable", () => {
+    const result = plan(track(), [{ spotify_id: ID, streams_total: "3000000" }]);
+    expect(updatesToApply(result, true)).toEqual([]);
+    expect(updatesToApply(result, false)).toEqual(result.updates);
+    const report = formatSpotifyFullImportReport(result, "data/spotify_full.csv", { dryRun: true });
+    expect(report).toContain("Mode: DRY RUN");
+    expect(report).toContain("Calibration: global median provisional");
+    expect(report).toContain("Easy >= 5,555,777");
   });
 });
 

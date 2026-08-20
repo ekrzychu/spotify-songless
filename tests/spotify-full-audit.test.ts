@@ -53,6 +53,20 @@ describe("Spotify full stream audit", () => {
     expect(report.confusionMatrix.normal.easy).toBe(1);
   });
 
+  it("uses provisional thresholds when auditing a spotify_full-owned row", () => {
+    const local = localTrack({
+      streamCount: 3_000_000,
+      difficulty: "normal",
+      streamCountSource: "spotify_full",
+    });
+    const audit = new SpotifyFullAuditAccumulator(new Map([[local.spotifyTrackId, local]]));
+    audit.consume({ spotify_id: "local-track", streams_total: "3000000" });
+    expect(audit.report().comparisons[0]).toMatchObject({
+      csvDifficulty: "normal",
+      difficultyMatches: true,
+    });
+  });
+
   it("separates source and estimated groups", () => {
     const report = auditFor(
       {

@@ -297,9 +297,21 @@ Large `spotify_full.csv` datasets can provisionally rank matching local catalog 
 npm run streams:import -- "spotify_full.csv"
 ```
 
+To inspect the same import plan without writing anything:
+
+```powershell
+npm run streams:import -- "spotify_full.csv" --dry-run
+```
+
 Only a filename is accepted; absolute paths, traversal, and nested paths are rejected. The importer streams the CSV, matches exact Spotify IDs, rounds finite non-negative decimal estimates, and keeps the highest valid duplicate value. It writes `streamCountSource = spotify_full` only over missing or existing provisional values. It never replaces Soundcharts, verified CSV, or future verified sources.
 
-`spotify_full` is deliberately provisional. These tracks are available in ranked gameplay immediately, while remaining normal Soundcharts enrichment targets. A successful Soundcharts lookup replaces the provisional count and difficulty; audience-unavailable and `NOT FOUND` outcomes preserve them.
+`spotify_full` is deliberately provisional, not verified lifetime Spotify stream data. The importer stores the raw `streams_total` value unchanged as `streamCount` with `streamCountSource = spotify_full`, then assigns ranked difficulty with a calibrated provisional mapping because those proxy values are not equivalent to verified Soundcharts lifetime counts:
+
+```text
+Easy >= 5,555,777 | Normal >= 1,388,944 | Hard >= 277,789 | Extreme >= 55,558
+```
+
+The canonical verified Soundcharts / verified-CSV thresholds remain `1B / 250M / 50M / 10M`. A successful Soundcharts lookup replaces a provisional raw count and its provisional difficulty with verified Soundcharts values and canonical difficulty; audience-unavailable and `NOT FOUND` outcomes preserve the provisional fields.
 
 Source precedence is:
 

@@ -1,5 +1,5 @@
-import { difficultyFromStreams } from "@/lib/game/difficulty";
 import { parseSpotifyFullStreams } from "@/lib/streams/spotify-full-audit";
+import { difficultyFromSpotifyFullStreams } from "@/lib/streams/spotify-full-difficulty";
 import { STREAM_SOURCES, canSpotifyFullReplace } from "@/lib/streams/stream-sources";
 import { RANKED_DIFFICULTIES, type RankedDifficulty } from "@/types/game";
 
@@ -49,6 +49,13 @@ export type SpotifyFullImportPlan = {
   };
   updates: SpotifyFullProvisionalUpdate[];
 };
+
+export function updatesToApply(
+  plan: Pick<SpotifyFullImportPlan, "updates">,
+  dryRun: boolean,
+): readonly SpotifyFullProvisionalUpdate[] {
+  return dryRun ? [] : plan.updates;
+}
 
 export function isSpotifyTrackId(value: string): boolean {
   return /^[A-Za-z0-9]{22}$/.test(value);
@@ -124,7 +131,9 @@ export class SpotifyFullImportAccumulator {
         continue;
       }
       eligibleForUpdate += 1;
-      const difficulty = difficultyFromStreams(streamCount);
+      // Preserve the raw proxy value. Only its stored difficulty uses the
+      // calibrated provisional mapping; verified sources use canonical rules.
+      const difficulty = difficultyFromSpotifyFullStreams(streamCount);
       if (
         track.streamCountSource === STREAM_SOURCES.provisionalSpotifyFull
         && track.streamCount === BigInt(streamCount)
@@ -158,11 +167,22 @@ export class SpotifyFullImportAccumulator {
   }
 }
 
-export function formatSpotifyFullImportReport(plan: SpotifyFullImportPlan, displayPath: string): string {
+export function formatSpotifyFullImportReport(
+  plan: SpotifyFullImportPlan,
+  displayPath: string,
+  options: { dryRun?: boolean } = {},
+): string {
   return [
     "SPOTIFY_FULL PROVISIONAL STREAM IMPORT",
     "",
     `Input: ${displayPath}`,
+    ...(options.dryRun ? ["Mode: DRY RUN — no database writes"] : []),
+    "Calibration: global median provisional",
+    "SPOTIFY_FULL PROVISIONAL THRESHOLDS (not verified Soundcharts thresholds):",
+    "  Easy >= 5,555,777",
+    "  Normal >= 1,388,944",
+    "  Hard >= 277,789",
+    "  Extreme >= 55,558",
     "",
     `CSV rows read: ${plan.csvRowsRead}`,
     `Local catalog tracks: ${plan.localCatalogTracks}`,

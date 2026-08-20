@@ -23,7 +23,10 @@ type SelectionFixture = {
   streamCountSource?: string | null;
 };
 
-function matchesSelection(track: SelectionFixture, difficulty: "hard" | "impossible" | "unranked"): boolean {
+function matchesSelection(
+  track: SelectionFixture,
+  difficulty: "easy" | "normal" | "hard" | "extreme" | "impossible" | "unranked",
+): boolean {
   if (!track.playable || !track.gameEligible || !track.languageEligible) return false;
   return difficulty === "unranked"
     ? track.streamCount === null || track.difficulty === null
@@ -136,11 +139,12 @@ describe("random track selection", () => {
       gameEligible: true,
       languageEligible: true,
       streamCount: 3_000_000n,
-      difficulty: "impossible",
+      difficulty: "normal",
       streamCountSource: "spotify_full",
     };
     expect(matchesSelection(provisional, "unranked")).toBe(false);
-    expect(matchesSelection(provisional, "impossible")).toBe(true);
+    // Gameplay trusts the stored source-specific provisional difficulty.
+    expect(matchesSelection(provisional, "normal")).toBe(true);
     expect(gameplaySelectionWhere("all", "impossible")).not.toHaveProperty("streamCountSource");
   });
 

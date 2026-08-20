@@ -1,4 +1,6 @@
 import { difficultyFromStreams } from "@/lib/game/difficulty";
+import { difficultyFromSpotifyFullStreams } from "@/lib/streams/spotify-full-difficulty";
+import { STREAM_SOURCES } from "@/lib/streams/stream-sources";
 import { RANKED_DIFFICULTIES, type RankedDifficulty } from "@/types/game";
 
 export type LocalRankedTrack = {
@@ -156,7 +158,9 @@ export class SpotifyFullAuditAccumulator {
     }
 
     this.matchedRows += 1;
-    const csvDifficulty = difficultyFromStreams(csvStreams);
+    const csvDifficulty = local.streamCountSource === STREAM_SOURCES.provisionalSpotifyFull
+      ? difficultyFromSpotifyFullStreams(csvStreams)
+      : difficultyFromStreams(csvStreams);
     const ratio = local.streamCount === 0 ? null : csvStreams / local.streamCount;
     const absolutePercentageError = ratio === null ? null : Math.abs(ratio - 1) * 100;
     this.comparisonsBySpotifyId.set(spotifyTrackId, {
