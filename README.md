@@ -550,10 +550,6 @@ node_modules/
 .next/
 ```
 
-Never commit Spotify, Soundcharts, or other service credentials.
-
-Do not commit private or licensed datasets.
-
 Spodle does not store Spotify audio. Playback is provided by Spotify through the Web Playback SDK.
 
 ---
